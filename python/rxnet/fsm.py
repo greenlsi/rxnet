@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence, Any
+from typing import Any, Callable, Optional, Sequence
 
 Guard = Callable[["Context", Any], bool]
 Action = Callable[["Context", Any], None]
@@ -29,40 +30,23 @@ class Machine:
 
 
 class Context:
-    __slots__ = ("_staged_inputs", "inputs")
+    __slots__ = ("inputs", "latched_inputs")
 
-    def __init__(self, input_count: int) -> None:
-        if input_count < 0:
-            raise ValueError("input_count must be >= 0")
-        self._staged_inputs: List[int] = [0] * input_count
-        self.inputs: List[int] = [0] * input_count
-
-    @property
-    def input_count(self) -> int:
-        return len(self.inputs)
-
-    def stage_input(self, input_id: int, value: int) -> None:
-        self._staged_inputs[input_id] = int(value)
-
-    def stage_inputs(self, values: Sequence[int]) -> None:
-        if len(values) != len(self._staged_inputs):
-            raise ValueError("wrong number of inputs")
-        self._staged_inputs[:] = [int(value) for value in values]
-
-    def read_input(self, input_id: int) -> int:
-        return self.inputs[input_id]
+    def __init__(self, inputs: Any) -> None:
+        self.inputs = inputs
+        self.latched_inputs = copy.copy(inputs)
 
     def _latch(self) -> None:
-        self.inputs[:] = self._staged_inputs
+        self.latched_inputs = copy.copy(self.inputs)
 
 
 class Runtime:
     __slots__ = ("context", "_machines", "_action_queue")
 
-    def __init__(self, input_count: int) -> None:
-        self.context = Context(input_count)
-        self._machines: List[Machine] = []
-        self._action_queue: List[tuple[Action, Any]] = []
+    def __init__(self, inputs: Any) -> None:
+        self.context = Context(inputs)
+        self._machines: list[Machine] = []
+        self._action_queue: list[tuple[Action, Any]] = []
 
     @property
     def machines(self) -> Sequence[Machine]:

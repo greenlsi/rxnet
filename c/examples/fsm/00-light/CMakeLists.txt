@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_driver.c"
+        "light_fsm.c"
+        "../../../src/fsm.c"
+    INCLUDE_DIRS
+        "."
+        "../../../include"
+)

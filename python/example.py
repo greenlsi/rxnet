@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rxnet import Context, Machine, Runtime, Transition
-
-START = 0
-STOP = 1
+from rxnet.fsm import Context, Machine, Runtime, Transition
 
 IDLE = 0
 RUNNING = 1
@@ -17,17 +14,23 @@ STATE_NAME = {
 
 
 @dataclass
+class Inputs:
+    start: int = 0
+    stop: int = 0
+
+
+@dataclass
 class AppData:
     motor_enabled: int = 0
     lamp_enabled: int = 0
 
 
 def start_pressed(ctx: Context, user: AppData) -> bool:
-    return ctx.read_input(START) != 0
+    return ctx.latched_inputs.start != 0
 
 
 def stop_pressed(ctx: Context, user: AppData) -> bool:
-    return ctx.read_input(STOP) != 0
+    return ctx.latched_inputs.stop != 0
 
 
 def motor_on(ctx: Context, user: AppData) -> None:
@@ -58,7 +61,7 @@ def print_status(step: str, motor: Machine, lamp: Machine, app: AppData) -> None
 
 def main() -> None:
     app = AppData()
-    runtime = Runtime(input_count=2)
+    runtime = Runtime(inputs=Inputs())
 
     motor = Machine(
         name="motor",
@@ -85,13 +88,13 @@ def main() -> None:
 
     print_status("init", motor, lamp, app)
 
-    runtime.context.stage_input(START, 1)
-    runtime.context.stage_input(STOP, 0)
+    runtime.context.inputs.start = 1
+    runtime.context.inputs.stop = 0
     runtime.tick()
     print_status("after start", motor, lamp, app)
 
-    runtime.context.stage_input(START, 0)
-    runtime.context.stage_input(STOP, 1)
+    runtime.context.inputs.start = 0
+    runtime.context.inputs.stop = 1
     runtime.tick()
     print_status("after stop", motor, lamp, app)
 

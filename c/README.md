@@ -2,36 +2,45 @@
 
 `rxnet` is a small synchronous runtime for reactive models.
 
-This C core currently includes finite-state machines with:
+The C implementation provides two model types:
 
-- integer states
-- transitions stored in arrays
-- guard and action function pointers
-- global input latching
-- deferred actions executed after the global state commit
+- FSM: `include/rxnet/fsm.h`, `src/fsm.c`
+- Petri Net: `include/rxnet/pn.h`, `src/pn.c`
 
-## Build the example
+Both use typed application inputs via context buffers:
+
+- `ctx->inputs`: mutable live inputs (written by app/drivers)
+- `ctx->latched_inputs`: immutable snapshot for the current tick
+- `ctx->inputs_size`: bytes copied during latch
+
+Tick semantics:
+
+1. app updates `ctx->inputs`
+2. `tick` does `memcpy(latched_inputs, inputs, inputs_size)`
+3. guards evaluate against `latched_inputs`
+4. state/marking commit happens globally
+5. deferred actions run after commit
+
+## Build FSM example
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic -Iinclude src/rxnet.c examples/example.c -o example
-./example
+gcc -std=c11 -Wall -Wextra -Wpedantic -Iinclude src/fsm.c examples/example.c -o fsm_example
+./fsm_example
 ```
 
-## Transition
+## ESP-IDF FSM example
 
-```c
-rx_transition t = {
-    .from_state = IDLE,
-    .to_state = RUNNING,
-    .guard = start_pressed,
-    .action = motor_on,
-};
+- `examples/fsm/00-light/main.c`
+- `examples/fsm/00-light/light_fsm.c`
+- `examples/fsm/00-light/light_fsm.h`
+- `examples/fsm/00-light/app_driver.c`
+- `examples/fsm/00-light/app_driver.h`
+
+This example shows periodic `rx_fsm_tick()` activation with `vTaskDelayUntil(...)` and ISR-driven input updates.
+
+## Build Petri Net example
+
+```bash
+gcc -std=c11 -Wall -Wextra -Wpedantic -Iinclude src/pn.c examples/pn_example.c -o pn_example
+./pn_example
 ```
-
-## Semantics
-
-1. stage external inputs
-2. `rx_tick()` latches all inputs at once
-3. every machine evaluates transitions against the same snapshot
-4. all next states are committed together
-5. deferred actions run after the commit
