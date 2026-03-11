@@ -67,7 +67,7 @@ static void print_status(const char *step, const rx_fsm_machine *motor, const rx
 int main(void) {
     app_data app = {0, 0};
     rx_fsm_runtime runtime;
-    app_inputs *inputs;
+    app_inputs inputs = {0};
 
     rx_fsm_transition motor_transitions[] = {
         {IDLE, RUNNING, start_pressed, motor_on},
@@ -82,12 +82,10 @@ int main(void) {
     rx_fsm_machine motor;
     rx_fsm_machine lamp;
 
-    if (rx_fsm_runtime_init(&runtime, sizeof(app_inputs), 2) != 0) {
+    if (rx_fsm_runtime_init(&runtime, &inputs, sizeof(inputs), 2) != 0) {
         fprintf(stderr, "rx_fsm_runtime_init failed\n");
         return 1;
     }
-
-    inputs = (app_inputs *)runtime.context.inputs;
 
     rx_fsm_machine_init(&motor, "motor", IDLE, motor_transitions, 2, &app);
     rx_fsm_machine_init(&lamp, "lamp", IDLE, lamp_transitions, 2, &app);
@@ -100,13 +98,13 @@ int main(void) {
 
     print_status("init", &motor, &lamp, &app);
 
-    inputs->start = 1;
-    inputs->stop = 0;
+    inputs.start = 1;
+    inputs.stop = 0;
     rx_fsm_tick(&runtime);
     print_status("after start", &motor, &lamp, &app);
 
-    inputs->start = 0;
-    inputs->stop = 1;
+    inputs.start = 0;
+    inputs.stop = 1;
     rx_fsm_tick(&runtime);
     print_status("after stop", &motor, &lamp, &app);
 

@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rxnet.fsm import Context, Machine, Runtime, Transition
+from rxnet.fsm import Context, Machine, Transition
 
 IDLE = 0
 RUNNING = 1
-
-STATE_NAME = {
-    IDLE: "IDLE",
-    RUNNING: "RUNNING",
-}
 
 
 @dataclass
@@ -49,20 +44,7 @@ def lamp_off(ctx: Context, user: AppData) -> None:
     user.lamp_enabled = 0
 
 
-def print_status(step: str, motor: Machine, lamp: Machine, app: AppData) -> None:
-    print(
-        f"{step}: "
-        f"motor_state={STATE_NAME[motor.state]} "
-        f"lamp_state={STATE_NAME[lamp.state]} "
-        f"motor_enabled={app.motor_enabled} "
-        f"lamp_enabled={app.lamp_enabled}"
-    )
-
-
-def main() -> None:
-    app = AppData()
-    runtime = Runtime(inputs=Inputs())
-
+def build_machines(app: AppData) -> tuple[Machine, Machine]:
     motor = Machine(
         name="motor",
         state=IDLE,
@@ -83,21 +65,4 @@ def main() -> None:
         ],
     )
 
-    runtime.add_machine(motor)
-    runtime.add_machine(lamp)
-
-    print_status("init", motor, lamp, app)
-
-    runtime.context.inputs.start = 1
-    runtime.context.inputs.stop = 0
-    runtime.tick()
-    print_status("after start", motor, lamp, app)
-
-    runtime.context.inputs.start = 0
-    runtime.context.inputs.stop = 1
-    runtime.tick()
-    print_status("after stop", motor, lamp, app)
-
-
-if __name__ == "__main__":
-    main()
+    return motor, lamp

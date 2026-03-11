@@ -5,16 +5,17 @@
 
 #include "light_fsm.h"
 
-typedef struct {
-    gpio_num_t light_gpio;
+typedef struct app_driver {
     gpio_num_t button_gpio;
     light_inputs *inputs;
+    light_button_source button_source;
 } app_driver;
 
-esp_err_t app_driver_init(
+esp_err_t app_driver_init_button(
     app_driver *driver,
-    gpio_num_t light_gpio,
     gpio_num_t button_gpio,
-    light_inputs *inputs
+    light_inputs *inputs,
+    light_button_source button_source
 );
-void app_driver_set_light(app_driver *driver, int enabled);
+esp_err_t app_driver_init_light(gpio_num_t light_gpio);
+void app_driver_set_light(const app_driver *driver, gpio_num_t light_gpio, int enabled);

@@ -15,17 +15,20 @@ static void IRAM_ATTR button_isr_handler(void *arg) {
     }
 
     portENTER_CRITICAL_ISR(&s_driver_lock);
-    driver->inputs->button_press_event = true;
+    if (driver->button_source == LIGHT_BUTTON_B) {
+        driver->inputs->button_b_press_event = true;
+    } else {
+        driver->inputs->button_a_press_event = true;
+    }
     portEXIT_CRITICAL_ISR(&s_driver_lock);
 }
 
-esp_err_t app_driver_init(
+esp_err_t app_driver_init_button(
     app_driver *driver,
-    gpio_num_t light_gpio,
     gpio_num_t button_gpio,
-    light_inputs *inputs
+    light_inputs *inputs,
+    light_button_source button_source
 ) {
-    gpio_config_t light_config;
     gpio_config_t button_config;
     esp_err_t err;
 
@@ -33,16 +36,14 @@ esp_err_t app_driver_init(
         return ESP_ERR_INVALID_ARG;
     }
 
-    driver->light_gpio = light_gpio;
     driver->button_gpio = button_gpio;
     driver->inputs = inputs;
-    driver->inputs->button_press_event = false;
-
-    light_config.pin_bit_mask = 1ULL << light_gpio;
-    light_config.mode = GPIO_MODE_OUTPUT;
-    light_config.pull_up_en = GPIO_PULLUP_DISABLE;
-    light_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    light_config.intr_type = GPIO_INTR_DISABLE;
+    driver->button_source = button_source;
+    if (button_source == LIGHT_BUTTON_B) {
+        driver->inputs->button_b_press_event = false;
+    } else {
+        driver->inputs->button_a_press_event = false;
+    }
 
     button_config.pin_bit_mask = 1ULL << button_gpio;
     button_config.mode = GPIO_MODE_INPUT;
@@ -50,17 +51,7 @@ esp_err_t app_driver_init(
     button_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
     button_config.intr_type = GPIO_INTR_NEGEDGE;
 
-    err = gpio_config(&light_config);
-    if (err != ESP_OK) {
-        return err;
-    }
-
     err = gpio_config(&button_config);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = gpio_set_level(light_gpio, 0);
     if (err != ESP_OK) {
         return err;
     }
@@ -78,10 +69,25 @@ esp_err_t app_driver_init(
     return ESP_OK;
 }
 
-void app_driver_set_light(app_driver *driver, int enabled) {
-    if (driver == NULL) {
-        return;
+esp_err_t app_driver_init_light(gpio_num_t light_gpio) {
+    gpio_config_t light_config;
+    esp_err_t err;
+
+    light_config.pin_bit_mask = 1ULL << light_gpio;
+    light_config.mode = GPIO_MODE_OUTPUT;
+    light_config.pull_up_en = GPIO_PULLUP_DISABLE;
+    light_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    light_config.intr_type = GPIO_INTR_DISABLE;
+
+    err = gpio_config(&light_config);
+    if (err != ESP_OK) {
+        return err;
     }
 
-    gpio_set_level(driver->light_gpio, enabled ? 1 : 0);
+    return gpio_set_level(light_gpio, 0);
+}
+
+void app_driver_set_light(const app_driver *driver, gpio_num_t light_gpio, int enabled) {
+    (void)driver;
+    gpio_set_level(light_gpio, enabled ? 1 : 0);
 }

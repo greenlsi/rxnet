@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rxnet.pn import Arc, Context, Net, Runtime, Transition
+from rxnet.pn import Arc, Context, Net, Transition
 
 P_IDLE = 0
 P_BUSY = 1
@@ -31,11 +31,8 @@ def on_fire(ctx: Context, user: AppData) -> None:
     user.fired_count += 1
 
 
-def main() -> None:
-    app = AppData()
-    runtime = Runtime(inputs=Inputs())
-
-    net = Net(
+def build_net(app: AppData) -> Net:
+    return Net(
         name="queue",
         places=[1, 0],
         transitions=[
@@ -54,21 +51,3 @@ def main() -> None:
         ],
         user=app,
     )
-
-    runtime.add_net(net)
-
-    print(f"init: places={net.places} fired={app.fired_count}")
-
-    runtime.context.inputs.add = 1
-    runtime.context.inputs.remove = 0
-    runtime.tick()
-    print(f"after add: places={net.places} fired={app.fired_count}")
-
-    runtime.context.inputs.add = 0
-    runtime.context.inputs.remove = 1
-    runtime.tick()
-    print(f"after remove: places={net.places} fired={app.fired_count}")
-
-
-if __name__ == "__main__":
-    main()

@@ -2,7 +2,12 @@
 
 `rxnet` is a small synchronous runtime for reactive models.
 
-The Python package provides two modules:
+The Python package has a shared internal runtime by phases:
+
+- `rxnet.runtime`
+- phase order per tick: latch inputs -> evaluate all nodes -> commit all nodes -> run deferred actions
+
+Model frontends:
 
 - FSM: `rxnet.fsm`
 - Petri Net: `rxnet.pn`
@@ -13,17 +18,17 @@ Both use typed application inputs via context objects:
 - `context.latched_inputs`: snapshot used during guard evaluation
 - latch implementation: `context.latched_inputs = copy.copy(context.inputs)`
 
-Tick semantics:
-
-1. app updates `context.inputs`
-2. `tick` latches with `copy.copy`
-3. guards evaluate against `latched_inputs`
-4. state/marking commit happens globally
-5. deferred actions run after commit
-
 ## Examples
 
+Examples are under `python/examples` and split in:
+
+- `model.py`: model definitions and guards/actions
+- `system.py`: system-specific input writer/driver
+- `main.py`: runtime wiring and execution loop
+
+Run:
+
 ```bash
-python example.py
-python pn_example.py
+python examples/fsm/00-basic/main.py
+python examples/pn/00-basic/main.py
 ```

@@ -2,11 +2,13 @@
 
 #include <stddef.h>
 
+#include "rxnet/runtime.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct rx_pn_context rx_pn_context;
+typedef rx_context rx_pn_context;
 typedef struct rx_pn_net rx_pn_net;
 typedef struct rx_pn_runtime rx_pn_runtime;
 typedef struct rx_pn_transition rx_pn_transition;
@@ -14,12 +16,6 @@ typedef struct rx_pn_arc rx_pn_arc;
 
 typedef int (*rx_pn_guard_fn)(const rx_pn_context *ctx, void *user);
 typedef void (*rx_pn_action_fn)(rx_pn_context *ctx, void *user);
-
-struct rx_pn_context {
-    void *inputs;
-    void *latched_inputs;
-    size_t inputs_size;
-};
 
 struct rx_pn_arc {
     size_t place_id;
@@ -47,19 +43,16 @@ struct rx_pn_net {
 };
 
 struct rx_pn_runtime {
-    rx_pn_context context;
-    rx_pn_net **nets;
-    size_t net_count;
-    size_t net_capacity;
-    struct {
-        rx_pn_action_fn fn;
-        void *user;
-    } *action_queue;
-    size_t action_count;
-    size_t action_capacity;
+    rx_context context;
+    rx_runtime runtime;
 };
 
-int rx_pn_runtime_init(rx_pn_runtime *runtime, size_t inputs_size, size_t net_capacity);
+int rx_pn_runtime_init(
+    rx_pn_runtime *runtime,
+    void *inputs,
+    size_t inputs_size,
+    size_t net_capacity
+);
 void rx_pn_runtime_free(rx_pn_runtime *runtime);
 
 int rx_pn_net_init(

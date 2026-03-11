@@ -3,44 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int rx_pn_context_latch(rx_pn_context *ctx) {
-    if (ctx == NULL) {
-        return -1;
-    }
-
-    if (ctx->inputs_size == 0) {
-        return 0;
-    }
-
-    memcpy(ctx->latched_inputs, ctx->inputs, ctx->inputs_size);
-    return 0;
-}
-
-static int rx_pn_runtime_queue_action(rx_pn_runtime *runtime, rx_pn_action_fn fn, void *user) {
-    size_t new_capacity;
-    void *new_queue;
-
-    if (runtime->action_count < runtime->action_capacity) {
-        runtime->action_queue[runtime->action_count].fn = fn;
-        runtime->action_queue[runtime->action_count].user = user;
-        runtime->action_count += 1;
-        return 0;
-    }
-
-    new_capacity = runtime->action_capacity == 0 ? 8 : runtime->action_capacity * 2;
-    new_queue = realloc(runtime->action_queue, new_capacity * sizeof(*runtime->action_queue));
-    if (new_queue == NULL) {
-        return -1;
-    }
-
-    runtime->action_queue = new_queue;
-    runtime->action_capacity = new_capacity;
-    runtime->action_queue[runtime->action_count].fn = fn;
-    runtime->action_queue[runtime->action_count].user = user;
-    runtime->action_count += 1;
-    return 0;
-}
-
 static int rx_pn_validate_arc_list(const rx_pn_net *net, const rx_pn_arc *arcs, size_t arc_count) {
     size_t i;
 
@@ -62,7 +24,7 @@ static int rx_pn_transition_enabled(const rx_pn_net *net, const rx_pn_transition
 
     if (rx_pn_validate_arc_list(net, transition->consume, transition->consume_count) != 0 ||
         rx_pn_validate_arc_list(net, transition->produce, transition->produce_count) != 0) {
-        return -1;
+        return 0;
     }
 
     for (i = 0; i < transition->consume_count; ++i) {
@@ -90,24 +52,68 @@ static void rx_pn_apply_transition_delta(rx_pn_net *net, const rx_pn_transition 
     }
 }
 
-int rx_pn_runtime_init(rx_pn_runtime *runtime, size_t inputs_size, size_t net_capacity) {
+static void rx_pn_net_evaluate(void *node, rx_context *ctx) {
+    rx_pn_net *net = (rx_pn_net *)node;
+    size_t t;
+
+    memcpy(net->next_places, net->places, net->place_count * sizeof(int));
+    memset(net->fire_flags, 0, net->transition_count * sizeof(unsigned char));
+
+    for (t = 0; t < net->transition_count; ++t) {
+        const rx_pn_transition *transition = &net->transitions[t];
+
+        if (!rx_pn_transition_enabled(net, transition)) {
+            continue;
+        }
+
+        if (transition->guard != NULL && !transition->guard(ctx, net->user)) {
+            continue;
+        }
+
+        net->fire_flags[t] = 1;
+    }
+}
+
+static void rx_pn_net_commit(void *node, rx_context *ctx) {
+    rx_pn_net *net = (rx_pn_net *)node;
+    size_t t;
+
+    for (t = 0; t < net->transition_count; ++t) {
+        if (!net->fire_flags[t]) {
+            continue;
+        }
+
+        rx_pn_apply_transition_delta(net, &net->transitions[t]);
+
+        if (net->transitions[t].action != NULL) {
+            rx_context_enqueue_deferred_action(ctx, net->transitions[t].action, net->user);
+        }
+    }
+
+    memcpy(net->places, net->next_places, net->place_count * sizeof(int));
+}
+
+static const rx_node_vtable RX_PN_NET_VTABLE = {
+    .evaluate = rx_pn_net_evaluate,
+    .commit = rx_pn_net_commit,
+};
+
+int rx_pn_runtime_init(
+    rx_pn_runtime *runtime,
+    void *inputs,
+    size_t inputs_size,
+    size_t net_capacity
+) {
     if (runtime == NULL) {
         return -1;
     }
 
-    runtime->context.inputs_size = inputs_size;
-    runtime->context.inputs = calloc(1, inputs_size);
-    runtime->context.latched_inputs = calloc(1, inputs_size);
-    runtime->nets = calloc(net_capacity, sizeof(*runtime->nets));
-    runtime->net_count = 0;
-    runtime->net_capacity = net_capacity;
-    runtime->action_capacity = net_capacity > 0 ? net_capacity * 2 : 8;
-    runtime->action_queue = calloc(runtime->action_capacity, sizeof(*runtime->action_queue));
-    runtime->action_count = 0;
+    if (rx_context_init(&runtime->context, inputs, inputs_size) != 0) {
+        return -1;
+    }
 
-    if ((inputs_size > 0 && (runtime->context.inputs == NULL || runtime->context.latched_inputs == NULL)) ||
-        (net_capacity > 0 && runtime->nets == NULL) || runtime->action_queue == NULL) {
-        rx_pn_runtime_free(runtime);
+    if (rx_runtime_init(&runtime->runtime, &runtime->context, net_capacity) != 0) {
+        rx_context_free(&runtime->context);
         return -1;
     }
 
@@ -119,20 +125,8 @@ void rx_pn_runtime_free(rx_pn_runtime *runtime) {
         return;
     }
 
-    free(runtime->context.inputs);
-    free(runtime->context.latched_inputs);
-    free(runtime->nets);
-    free(runtime->action_queue);
-
-    runtime->context.inputs = NULL;
-    runtime->context.latched_inputs = NULL;
-    runtime->context.inputs_size = 0;
-    runtime->nets = NULL;
-    runtime->net_count = 0;
-    runtime->net_capacity = 0;
-    runtime->action_queue = NULL;
-    runtime->action_count = 0;
-    runtime->action_capacity = 0;
+    rx_runtime_free(&runtime->runtime);
+    rx_context_free(&runtime->context);
 }
 
 int rx_pn_net_init(
@@ -144,6 +138,8 @@ int rx_pn_net_init(
     size_t transition_count,
     void *user
 ) {
+    size_t t;
+
     if (net == NULL || (place_count > 0 && initial_places == NULL) ||
         (transition_count > 0 && transitions == NULL)) {
         return -1;
@@ -169,6 +165,14 @@ int rx_pn_net_init(
         memcpy(net->next_places, initial_places, place_count * sizeof(int));
     }
 
+    for (t = 0; t < transition_count; ++t) {
+        if (rx_pn_validate_arc_list(net, transitions[t].consume, transitions[t].consume_count) != 0 ||
+            rx_pn_validate_arc_list(net, transitions[t].produce, transitions[t].produce_count) != 0) {
+            rx_pn_net_free(net);
+            return -1;
+        }
+    }
+
     return 0;
 }
 
@@ -192,85 +196,21 @@ void rx_pn_net_free(rx_pn_net *net) {
 }
 
 int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net) {
+    rx_node node;
+
     if (runtime == NULL || net == NULL) {
         return -1;
     }
 
-    if (runtime->net_count >= runtime->net_capacity) {
-        return -1;
-    }
-
-    runtime->nets[runtime->net_count++] = net;
-    return 0;
+    node.vtable = &RX_PN_NET_VTABLE;
+    node.self = net;
+    return rx_runtime_add_node(&runtime->runtime, node);
 }
 
 int rx_pn_tick(rx_pn_runtime *runtime) {
-    size_t i;
-
     if (runtime == NULL) {
         return -1;
     }
 
-    if (rx_pn_context_latch(&runtime->context) != 0) {
-        return -1;
-    }
-
-    runtime->action_count = 0;
-
-    for (i = 0; i < runtime->net_count; ++i) {
-        rx_pn_net *net = runtime->nets[i];
-        size_t t;
-
-        if (net == NULL) {
-            return -1;
-        }
-
-        memset(net->fire_flags, 0, net->transition_count * sizeof(unsigned char));
-        memcpy(net->next_places, net->places, net->place_count * sizeof(int));
-
-        for (t = 0; t < net->transition_count; ++t) {
-            const rx_pn_transition *transition = &net->transitions[t];
-            int enabled;
-
-            enabled = rx_pn_transition_enabled(net, transition);
-            if (enabled < 0) {
-                return -1;
-            }
-            if (enabled == 0) {
-                continue;
-            }
-
-            if (transition->guard != NULL && !transition->guard(&runtime->context, net->user)) {
-                continue;
-            }
-
-            net->fire_flags[t] = 1;
-        }
-    }
-
-    for (i = 0; i < runtime->net_count; ++i) {
-        rx_pn_net *net = runtime->nets[i];
-        size_t t;
-
-        for (t = 0; t < net->transition_count; ++t) {
-            if (!net->fire_flags[t]) {
-                continue;
-            }
-
-            rx_pn_apply_transition_delta(net, &net->transitions[t]);
-
-            if (net->transitions[t].action != NULL &&
-                rx_pn_runtime_queue_action(runtime, net->transitions[t].action, net->user) != 0) {
-                return -1;
-            }
-        }
-
-        memcpy(net->places, net->next_places, net->place_count * sizeof(int));
-    }
-
-    for (i = 0; i < runtime->action_count; ++i) {
-        runtime->action_queue[i].fn(&runtime->context, runtime->action_queue[i].user);
-    }
-
-    return 0;
+    return rx_tick(&runtime->runtime);
 }

@@ -1,64 +1,61 @@
 #include "rxnet/fsm.h"
 
-#include <stdlib.h>
-#include <string.h>
+static void rx_fsm_machine_evaluate(void *node, rx_context *ctx) {
+    rx_fsm_machine *machine = (rx_fsm_machine *)node;
+    size_t j;
 
-static int rx_fsm_context_latch(rx_fsm_context *ctx) {
-    if (ctx == NULL) {
-        return -1;
+    machine->next_state = machine->state;
+    machine->proposed_action = NULL;
+    if (machine->inputs_projector != NULL) {
+        machine->inputs_projector(ctx, machine->user);
     }
 
-    if (ctx->inputs_size == 0) {
-        return 0;
-    }
+    for (j = 0; j < machine->transition_count; ++j) {
+        const rx_fsm_transition *t = &machine->transitions[j];
 
-    memcpy(ctx->latched_inputs, ctx->inputs, ctx->inputs_size);
-    return 0;
+        if (t->from_state != machine->state) {
+            continue;
+        }
+
+        if (t->guard == NULL || t->guard(ctx, machine->user)) {
+            machine->next_state = t->to_state;
+            machine->proposed_action = t->action;
+            break;
+        }
+    }
 }
 
-static int rx_fsm_runtime_queue_action(rx_fsm_runtime *runtime, rx_fsm_action_fn fn, void *user) {
-    size_t new_capacity;
-    void *new_queue;
+static void rx_fsm_machine_commit(void *node, rx_context *ctx) {
+    rx_fsm_machine *machine = (rx_fsm_machine *)node;
 
-    if (runtime->action_count < runtime->action_capacity) {
-        runtime->action_queue[runtime->action_count].fn = fn;
-        runtime->action_queue[runtime->action_count].user = user;
-        runtime->action_count += 1;
-        return 0;
+    machine->state = machine->next_state;
+
+    if (machine->proposed_action != NULL) {
+        rx_context_enqueue_deferred_action(ctx, machine->proposed_action, machine->user);
     }
-
-    new_capacity = runtime->action_capacity == 0 ? 4 : runtime->action_capacity * 2;
-    new_queue = realloc(runtime->action_queue, new_capacity * sizeof(*runtime->action_queue));
-    if (new_queue == NULL) {
-        return -1;
-    }
-
-    runtime->action_queue = new_queue;
-    runtime->action_capacity = new_capacity;
-    runtime->action_queue[runtime->action_count].fn = fn;
-    runtime->action_queue[runtime->action_count].user = user;
-    runtime->action_count += 1;
-    return 0;
 }
 
-int rx_fsm_runtime_init(rx_fsm_runtime *runtime, size_t inputs_size, size_t machine_capacity) {
+static const rx_node_vtable RX_FSM_MACHINE_VTABLE = {
+    .evaluate = rx_fsm_machine_evaluate,
+    .commit = rx_fsm_machine_commit,
+};
+
+int rx_fsm_runtime_init(
+    rx_fsm_runtime *runtime,
+    void *inputs,
+    size_t inputs_size,
+    size_t machine_capacity
+) {
     if (runtime == NULL) {
         return -1;
     }
 
-    runtime->context.inputs_size = inputs_size;
-    runtime->context.inputs = calloc(1, inputs_size);
-    runtime->context.latched_inputs = calloc(1, inputs_size);
-    runtime->machines = calloc(machine_capacity, sizeof(*runtime->machines));
-    runtime->machine_count = 0;
-    runtime->machine_capacity = machine_capacity;
-    runtime->action_capacity = machine_capacity > 0 ? machine_capacity : 4;
-    runtime->action_queue = calloc(runtime->action_capacity, sizeof(*runtime->action_queue));
-    runtime->action_count = 0;
+    if (rx_context_init(&runtime->context, inputs, inputs_size) != 0) {
+        return -1;
+    }
 
-    if ((inputs_size > 0 && (runtime->context.inputs == NULL || runtime->context.latched_inputs == NULL)) ||
-        (machine_capacity > 0 && runtime->machines == NULL) || runtime->action_queue == NULL) {
-        rx_fsm_runtime_free(runtime);
+    if (rx_runtime_init(&runtime->runtime, &runtime->context, machine_capacity) != 0) {
+        rx_context_free(&runtime->context);
         return -1;
     }
 
@@ -70,20 +67,8 @@ void rx_fsm_runtime_free(rx_fsm_runtime *runtime) {
         return;
     }
 
-    free(runtime->context.inputs);
-    free(runtime->context.latched_inputs);
-    free(runtime->machines);
-    free(runtime->action_queue);
-
-    runtime->context.inputs = NULL;
-    runtime->context.latched_inputs = NULL;
-    runtime->context.inputs_size = 0;
-    runtime->machines = NULL;
-    runtime->machine_count = 0;
-    runtime->machine_capacity = 0;
-    runtime->action_queue = NULL;
-    runtime->action_count = 0;
-    runtime->action_capacity = 0;
+    rx_runtime_free(&runtime->runtime);
+    rx_context_free(&runtime->context);
 }
 
 void rx_fsm_machine_init(
@@ -104,74 +89,34 @@ void rx_fsm_machine_init(
     machine->transitions = transitions;
     machine->transition_count = transition_count;
     machine->user = user;
-    machine->deferred_action = NULL;
+    machine->proposed_action = NULL;
+    machine->inputs_projector = NULL;
+}
+
+void rx_fsm_machine_set_inputs_projector(rx_fsm_machine *machine, rx_fsm_inputs_projector_fn projector) {
+    if (machine == NULL) {
+        return;
+    }
+
+    machine->inputs_projector = projector;
 }
 
 int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine) {
+    rx_node node;
+
     if (runtime == NULL || machine == NULL) {
         return -1;
     }
 
-    if (runtime->machine_count >= runtime->machine_capacity) {
-        return -1;
-    }
-
-    runtime->machines[runtime->machine_count++] = machine;
-    return 0;
+    node.vtable = &RX_FSM_MACHINE_VTABLE;
+    node.self = machine;
+    return rx_runtime_add_node(&runtime->runtime, node);
 }
 
 int rx_fsm_tick(rx_fsm_runtime *runtime) {
-    size_t i;
-
     if (runtime == NULL) {
         return -1;
     }
 
-    if (rx_fsm_context_latch(&runtime->context) != 0) {
-        return -1;
-    }
-
-    runtime->action_count = 0;
-
-    for (i = 0; i < runtime->machine_count; ++i) {
-        rx_fsm_machine *machine = runtime->machines[i];
-        size_t j;
-
-        if (machine == NULL) {
-            return -1;
-        }
-
-        machine->next_state = machine->state;
-        machine->deferred_action = NULL;
-
-        for (j = 0; j < machine->transition_count; ++j) {
-            const rx_fsm_transition *t = &machine->transitions[j];
-
-            if (t->from_state != machine->state) {
-                continue;
-            }
-
-            if (t->guard == NULL || t->guard(&runtime->context, machine->user)) {
-                machine->next_state = t->to_state;
-                machine->deferred_action = t->action;
-                break;
-            }
-        }
-    }
-
-    for (i = 0; i < runtime->machine_count; ++i) {
-        rx_fsm_machine *machine = runtime->machines[i];
-        machine->state = machine->next_state;
-
-        if (machine->deferred_action != NULL &&
-            rx_fsm_runtime_queue_action(runtime, machine->deferred_action, machine->user) != 0) {
-            return -1;
-        }
-    }
-
-    for (i = 0; i < runtime->action_count; ++i) {
-        runtime->action_queue[i].fn(&runtime->context, runtime->action_queue[i].user);
-    }
-
-    return 0;
+    return rx_tick(&runtime->runtime);
 }

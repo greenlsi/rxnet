@@ -37,7 +37,7 @@ int main(void) {
     app_data app = {0};
     rx_pn_runtime runtime;
     rx_pn_net net;
-    app_inputs *inputs;
+    app_inputs inputs = {0};
 
     int initial_places[] = {1, 0};
 
@@ -52,12 +52,10 @@ int main(void) {
         {t1_consume, 1, t1_produce, 1, want_remove, on_fire},
     };
 
-    if (rx_pn_runtime_init(&runtime, sizeof(app_inputs), 1) != 0) {
+    if (rx_pn_runtime_init(&runtime, &inputs, sizeof(inputs), 1) != 0) {
         fprintf(stderr, "rx_pn_runtime_init failed\n");
         return 1;
     }
-
-    inputs = (app_inputs *)runtime.context.inputs;
 
     if (rx_pn_net_init(&net, "queue", initial_places, 2, transitions, 2, &app) != 0) {
         fprintf(stderr, "rx_pn_net_init failed\n");
@@ -74,13 +72,13 @@ int main(void) {
 
     printf("init: places=[%d,%d] fired=%d\n", net.places[P_IDLE], net.places[P_BUSY], app.fired_count);
 
-    inputs->add = 1;
-    inputs->remove = 0;
+    inputs.add = 1;
+    inputs.remove = 0;
     rx_pn_tick(&runtime);
     printf("after add: places=[%d,%d] fired=%d\n", net.places[P_IDLE], net.places[P_BUSY], app.fired_count);
 
-    inputs->add = 0;
-    inputs->remove = 1;
+    inputs.add = 0;
+    inputs.remove = 1;
     rx_pn_tick(&runtime);
     printf("after remove: places=[%d,%d] fired=%d\n", net.places[P_IDLE], net.places[P_BUSY], app.fired_count);
 

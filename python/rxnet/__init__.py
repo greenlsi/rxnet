@@ -1,12 +1,13 @@
-from . import fsm, pn
-from .fsm import Action, Context, Guard, Machine, Runtime, Transition
+from . import fsm, pn, runtime
+from .fsm import Action, Machine, Runtime, Transition
+from .runtime import Context
 
 __all__ = [
     "fsm",
     "pn",
+    "runtime",
     "Action",
     "Context",
-    "Guard",
     "Machine",
     "Runtime",
     "Transition",
