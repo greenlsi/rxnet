@@ -1,5 +1,4 @@
 ---
-title: "Requirements, Design and Tasks for `rxnet`"
+title: "Requirements, Design and Tasks for rxnet"
 subtitle: "Reactive execution networks"
 ---
-

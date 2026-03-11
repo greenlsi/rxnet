@@ -1,6 +1,6 @@
 pdf: specs.pdf
 
-specs.pdf: specs.md specs/requirements.md specs/design.md # specs/tasks.md
+specs.pdf: specs.md specs/requirements.md specs/design.md specs/tasks.md
 
 %.pdf:
 	@echo "Generating $@..."

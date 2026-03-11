@@ -13,7 +13,7 @@ The design emphasizes deterministic execution, explicit input snapshotting, defe
 ### High-Level Architecture
 
 ::: {#fig:hl-arch}
-```{.mermaid format=pdf}
+```mermaid
 graph TB
     Host["Host Application / Loop"] --> FSMSurface["FSM Frontend (C/Python)"]
     Host --> PNSurface["PN Frontend (C/Python)"]
