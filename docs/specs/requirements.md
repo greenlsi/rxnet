@@ -16,13 +16,13 @@ The goal of this document is to capture what the library provides today, so futu
 - **FSM_Runtime**: FSM frontend wrapper over the core runtime
 - **FSM_Machine**: State machine node with transitions, guards, and optional actions
 - **FSM_Transition**: Rule from `from_state` to `to_state`, with optional guard/action
-- **Inputs_Projector**: C-only hook to map shared latched inputs into machine-local user data before FSM guard evaluation
 - **PN_Runtime**: Petri Net frontend wrapper over the core runtime
 - **PN_Net**: Petri net node with places, transitions, and firing flags
 - **PN_Transition**: Petri transition with consume/produce arcs, optional guard/action
 - **Arc**: Petri arc with `place_id` and `weight`
 - **Tick**: One complete synchronous cycle: latch -> evaluate -> commit -> deferred actions
 - **Latched_Inputs**: Immutable snapshot of current inputs used during one tick
+- **Config_Header**: C compile-time configuration header (`rxnet/config.h`) that defines fixed runtime capacities
 
 ## Requirements
 
@@ -49,6 +49,7 @@ The goal of this document is to capture what the library provides today, so futu
 3. WHEN ticking in C, THE runtime SHALL copy `inputs_size` bytes from `inputs` to `latched_inputs`
 4. WHEN ticking in Python, THE runtime SHALL update `latched_inputs` using `copy.copy(inputs)`
 5. THE C implementation SHALL keep ownership of the live inputs buffer in the application (runtime does not free it)
+6. WHEN initializing C context, THE provided `inputs_size` SHALL be less than or equal to the compile-time configured maximum input size
 
 ### Requirement 3: Deferred Action Execution
 
@@ -59,8 +60,9 @@ The goal of this document is to capture what the library provides today, so futu
 1. WHEN a node commits with a proposed action, THE Context SHALL enqueue the action for deferred execution
 2. THE Core_Runtime SHALL run deferred actions only after all node commits in the tick
 3. THE deferred action queue SHALL be cleared after execution
-4. THE C implementation SHALL grow deferred action storage dynamically when capacity is exceeded
+4. THE C implementation SHALL use a fixed deferred-action capacity established during initialization from compile-time configuration (`rxnet/config.h`)
 5. WHEN enqueue parameters are invalid in C (`ctx` or function is null), THE API SHALL return an error code (`-1`)
+6. WHEN deferred-action capacity is exhausted in C, THE enqueue API SHALL return `-1` without allocating memory
 
 ### Requirement 4: Generic Node Runtime API
 
@@ -73,6 +75,7 @@ The goal of this document is to capture what the library provides today, so futu
 3. WHEN adding nodes in C beyond configured capacity, THE runtime SHALL reject the operation with `-1`
 4. THE Python runtime SHALL support dynamic node list growth without explicit capacity configuration
 5. WHEN `tick` is called with invalid runtime/context in C, THE API SHALL return `-1`
+6. WHEN initializing C runtime, THE requested node capacity SHALL be less than or equal to the compile-time configured maximum node capacity
 
 ### Requirement 5: FSM Semantics
 
@@ -86,17 +89,15 @@ The goal of this document is to capture what the library provides today, so futu
 4. WHEN committing, THE machine SHALL update current state to `next_state`
 5. WHEN a transition action exists, THE action SHALL be enqueued as a deferred action (not executed inline during evaluate/commit)
 
-### Requirement 6: FSM Input Projection in C
+### Requirement 6: FSM Shared Input Access in C
 
-**User Story:** As an embedded integrator, I want optional per-machine input projection, so that multiple machines can share one global input snapshot while evaluating machine-local signals.
+**User Story:** As an embedded integrator, I want multiple machines to share one latched input snapshot, so that guard evaluation is simple and deterministic.
 
 #### Acceptance Criteria
 
-1. THE C FSM API SHALL support configuring an optional `inputs_projector` callback per machine
-2. WHEN `inputs_projector` is configured, THE callback SHALL execute at the start of machine evaluation
-3. THE projector SHALL receive the shared latched context and machine user payload
-4. THE runtime SHALL allow multiple FSM machines to share one context input struct
-5. IF no projector is configured, THEN FSM evaluation SHALL proceed directly with transition guard checks
+1. THE runtime SHALL allow multiple FSM machines to share one context input struct
+2. THE C FSM guard/action callbacks SHALL receive the shared latched context and machine user payload
+3. FSM guard evaluation SHALL proceed directly with transition guard checks
 
 ### Requirement 7: Petri Net Semantics
 
@@ -128,11 +129,12 @@ The goal of this document is to capture what the library provides today, so futu
 
 #### Acceptance Criteria
 
-1. THE C API SHALL provide runtime init/free functions for both FSM and PN frontends
+1. THE C API SHALL provide runtime init/free functions for both FSM and PN frontends, and optional create/destroy convenience constructors
 2. THE C API SHALL provide model registration functions (`add_machine`, `add_net`) before ticking
 3. THE C API SHALL provide model-specific cleanup for PN net internal buffers (`rx_pn_net_free`)
 4. WHEN freeing runtime/context in C, THE API SHALL reset internal pointers and counters to neutral values
 5. WHEN null pointers are passed to C free functions, THE functions SHALL return safely without crashing
+6. FOR C entities that expose `_create`, THE API SHALL expose matching `_destroy` and `_init` entry points
 
 ### Requirement 10: Python Frontend API Surface
 
@@ -156,7 +158,44 @@ The goal of this document is to capture what the library provides today, so futu
 2. THE repository SHALL include runnable Python examples for FSM and PN under `python/examples`
 3. THE example structure in Python SHALL separate model definition, system input writer, and runtime wiring (`model.py`, `system.py`, `main.py`)
 4. THE repository SHALL include an ESP-IDF FSM integration example with periodic ticking and ISR-driven input updates
-5. THE host CLI FSM example (`c/examples/fsm/00-light/main_cli.c`) SHALL support interactive commands to trigger input events and ticks
+5. THE host CLI FSM example (`c/examples/fsm/00-light/main_cli.c`) SHALL keep runtime wiring minimal (machine creation/registration + periodic tick loop), delegating command parsing to a dedicated CLI FSM
+
+### Requirement 13: Reusable CLI FSM Utility (C Example Layer)
+
+**User Story:** As an example integrator, I want a reusable CLI FSM utility with command registration and contextual user data, so that multiple examples can share the same terminal command loop behavior without duplicating logic.
+
+#### Acceptance Criteria
+
+1. THE C example layer SHALL provide a reusable CLI FSM module independent from the `00-light` domain model
+2. THE CLI FSM module SHALL support registering multiple commands by name via a public registration API
+3. EACH registered command SHALL support a per-command `user_data` payload passed to the command callback
+4. THE CLI FSM machine data SHALL expose a machine-level `user_data` pointer for integration-specific shared context
+5. THE CLI FSM module SHALL encapsulate terminal raw mode entry and restoration
+
+### Requirement 14: C Node Embedding and Typed Polymorphism
+
+**User Story:** As a C integrator, I want model structs to embed a base node type, so that runtime polymorphism is type-structured and avoids untyped `void* self` adapters.
+
+#### Acceptance Criteria
+
+1. THE C `rx_node` interface SHALL support polymorphism without a `void* self` field
+2. THE C FSM machine struct SHALL embed `rx_node` as its base member
+3. THE C PN net struct SHALL embed `rx_node` as its base member
+4. THE C runtime node registry SHALL store node pointers to embedded base nodes
+5. THE C tick loop SHALL invoke `evaluate`/`commit` through the embedded node base
+6. THE C frontend runtime wrappers (`rx_fsm_runtime`, `rx_pn_runtime`) SHALL embed `rx_runtime` as first member to allow safe upcast to base runtime pointer
+
+### Requirement 15: C Init/Create API Pattern
+
+**User Story:** As a C developer, I want both `_init` and `_create` APIs, so that I can choose deterministic preallocated memory or convenience allocation consistently across entities.
+
+#### Acceptance Criteria
+
+1. THE C API SHALL keep `_init` functions for caller-owned memory initialization
+2. THE C API SHALL provide `_create` functions that allocate memory and delegate to `_init`
+3. THE C API SHALL provide matching `_destroy` functions for `_create` allocations
+4. THE `_create` APIs SHALL perform allocation only during creation time and fail with null on allocation/init errors
+5. THE `_destroy` APIs SHALL be null-safe
 
 ### Requirement 12: Execution Model Constraints
 
@@ -169,3 +208,5 @@ The goal of this document is to capture what the library provides today, so futu
 3. THE library SHALL leave scheduling policy (tick frequency/loop ownership) to the host application
 4. THE library SHALL leave I/O side effects to user-defined action callbacks
 5. THE library SHALL support using one shared typed input structure across multiple model nodes in the same runtime context
+6. THE C tick path (`latch`, `evaluate`, `commit`, `run deferred actions`) SHALL perform no heap allocation or reallocation
+7. THE fixed C runtime capacities used by the tick path SHALL be configurable through `rxnet/config.h`

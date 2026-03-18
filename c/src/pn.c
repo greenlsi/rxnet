@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void rx_pn_noop_node_phase(rx_node *node, rx_context *ctx) {
+}
+
 static int rx_pn_validate_arc_list(const rx_pn_net *net, const rx_pn_arc *arcs, size_t arc_count) {
     size_t i;
 
@@ -52,7 +55,13 @@ static void rx_pn_apply_transition_delta(rx_pn_net *net, const rx_pn_transition 
     }
 }
 
-static void rx_pn_net_evaluate(void *node, rx_context *ctx) {
+static void rx_pn_net_latch_inputs(rx_node *node, rx_context *ctx) {
+    if (node->latch_inputs_cb != NULL) {
+        node->latch_inputs_cb(node, ctx);
+    }
+}
+
+static void rx_pn_net_evaluate(rx_node *node, rx_context *ctx) {
     rx_pn_net *net = (rx_pn_net *)node;
     size_t t;
 
@@ -74,7 +83,7 @@ static void rx_pn_net_evaluate(void *node, rx_context *ctx) {
     }
 }
 
-static void rx_pn_net_commit(void *node, rx_context *ctx) {
+static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
     rx_pn_net *net = (rx_pn_net *)node;
     size_t t;
 
@@ -93,22 +102,28 @@ static void rx_pn_net_commit(void *node, rx_context *ctx) {
     memcpy(net->places, net->next_places, net->place_count * sizeof(int));
 }
 
+static void rx_pn_net_dump_outputs(rx_node *node, rx_context *ctx) {
+    if (node->dump_outputs_cb != NULL) {
+        node->dump_outputs_cb(node, ctx);
+    }
+}
+
 static const rx_node_vtable RX_PN_NET_VTABLE = {
+    .latch_inputs = rx_pn_net_latch_inputs,
     .evaluate = rx_pn_net_evaluate,
     .commit = rx_pn_net_commit,
+    .dump_outputs = rx_pn_net_dump_outputs,
 };
 
 int rx_pn_runtime_init(
     rx_pn_runtime *runtime,
-    void *inputs,
-    size_t inputs_size,
     size_t net_capacity
 ) {
     if (runtime == NULL) {
         return -1;
     }
 
-    if (rx_context_init(&runtime->context, inputs, inputs_size) != 0) {
+    if (rx_context_init(&runtime->context) != 0) {
         return -1;
     }
 
@@ -120,6 +135,23 @@ int rx_pn_runtime_init(
     return 0;
 }
 
+rx_pn_runtime *rx_pn_runtime_create(
+    size_t net_capacity
+) {
+    rx_pn_runtime *runtime = (rx_pn_runtime *)malloc(sizeof(*runtime));
+
+    if (runtime == NULL) {
+        return NULL;
+    }
+
+    if (rx_pn_runtime_init(runtime, net_capacity) != 0) {
+        free(runtime);
+        return NULL;
+    }
+
+    return runtime;
+}
+
 void rx_pn_runtime_free(rx_pn_runtime *runtime) {
     if (runtime == NULL) {
         return;
@@ -127,6 +159,15 @@ void rx_pn_runtime_free(rx_pn_runtime *runtime) {
 
     rx_runtime_free(&runtime->runtime);
     rx_context_free(&runtime->context);
+}
+
+void rx_pn_runtime_destroy(rx_pn_runtime *runtime) {
+    if (runtime == NULL) {
+        return;
+    }
+
+    rx_pn_runtime_free(runtime);
+    free(runtime);
 }
 
 int rx_pn_net_init(
@@ -146,6 +187,9 @@ int rx_pn_net_init(
     }
 
     net->name = name;
+    net->node.vtable = &RX_PN_NET_VTABLE;
+    net->node.latch_inputs_cb = rx_pn_noop_node_phase;
+    net->node.dump_outputs_cb = rx_pn_noop_node_phase;
     net->place_count = place_count;
     net->transitions = transitions;
     net->transition_count = transition_count;
@@ -176,6 +220,28 @@ int rx_pn_net_init(
     return 0;
 }
 
+rx_pn_net *rx_pn_net_create(
+    const char *name,
+    const int *initial_places,
+    size_t place_count,
+    const rx_pn_transition *transitions,
+    size_t transition_count,
+    void *user
+) {
+    rx_pn_net *net = (rx_pn_net *)malloc(sizeof(*net));
+
+    if (net == NULL) {
+        return NULL;
+    }
+
+    if (rx_pn_net_init(net, name, initial_places, place_count, transitions, transition_count, user) != 0) {
+        free(net);
+        return NULL;
+    }
+
+    return net;
+}
+
 void rx_pn_net_free(rx_pn_net *net) {
     if (net == NULL) {
         return;
@@ -195,16 +261,22 @@ void rx_pn_net_free(rx_pn_net *net) {
     net->user = NULL;
 }
 
-int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net) {
-    rx_node node;
+void rx_pn_net_destroy(rx_pn_net *net) {
+    if (net == NULL) {
+        return;
+    }
 
+    rx_pn_net_free(net);
+    free(net);
+}
+
+int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net) {
     if (runtime == NULL || net == NULL) {
         return -1;
     }
 
-    node.vtable = &RX_PN_NET_VTABLE;
-    node.self = net;
-    return rx_runtime_add_node(&runtime->runtime, node);
+    net->node.vtable = &RX_PN_NET_VTABLE;
+    return rx_runtime_add_node(&runtime->runtime, &net->node);
 }
 
 int rx_pn_tick(rx_pn_runtime *runtime) {

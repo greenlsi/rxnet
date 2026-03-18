@@ -32,6 +32,7 @@ struct rx_pn_transition {
 };
 
 struct rx_pn_net {
+    rx_node node;
     const char *name;
     int *places;
     int *next_places;
@@ -43,17 +44,19 @@ struct rx_pn_net {
 };
 
 struct rx_pn_runtime {
-    rx_context context;
     rx_runtime runtime;
+    rx_context context;
 };
 
 int rx_pn_runtime_init(
     rx_pn_runtime *runtime,
-    void *inputs,
-    size_t inputs_size,
+    size_t net_capacity
+);
+rx_pn_runtime *rx_pn_runtime_create(
     size_t net_capacity
 );
 void rx_pn_runtime_free(rx_pn_runtime *runtime);
+void rx_pn_runtime_destroy(rx_pn_runtime *runtime);
 
 int rx_pn_net_init(
     rx_pn_net *net,
@@ -64,7 +67,16 @@ int rx_pn_net_init(
     size_t transition_count,
     void *user
 );
+rx_pn_net *rx_pn_net_create(
+    const char *name,
+    const int *initial_places,
+    size_t place_count,
+    const rx_pn_transition *transitions,
+    size_t transition_count,
+    void *user
+);
 void rx_pn_net_free(rx_pn_net *net);
+void rx_pn_net_destroy(rx_pn_net *net);
 
 int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net);
 int rx_pn_tick(rx_pn_runtime *runtime);

@@ -1,48 +1,54 @@
 #include "app_driver.h"
 
-#include <stddef.h>
+#include <stdint.h>
 
+#define APP_DRIVER_MAX_GPIO 64
+
+static unsigned char s_button_registered[APP_DRIVER_MAX_GPIO];
+static unsigned char s_button_event[APP_DRIVER_MAX_GPIO];
+
+static int gpio_to_index(gpio_num_t gpio) {
+    int idx = (int)gpio;
+
+    if (idx < 0 || idx >= APP_DRIVER_MAX_GPIO) {
+        return -1;
+    }
+
+    return idx;
+}
+
+#ifdef ESP_PLATFORM
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 
 static portMUX_TYPE s_driver_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void IRAM_ATTR button_isr_handler(void *arg) {
-    app_driver *driver = (app_driver *)arg;
+    int idx = (int)(intptr_t)arg;
 
-    if (driver == NULL || driver->inputs == NULL) {
+    if (idx < 0 || idx >= APP_DRIVER_MAX_GPIO) {
         return;
     }
 
     portENTER_CRITICAL_ISR(&s_driver_lock);
-    if (driver->button_source == LIGHT_BUTTON_B) {
-        driver->inputs->button_b_press_event = true;
-    } else {
-        driver->inputs->button_a_press_event = true;
+    if (s_button_registered[idx]) {
+        s_button_event[idx] = 1;
     }
     portEXIT_CRITICAL_ISR(&s_driver_lock);
 }
 
-esp_err_t app_driver_init_button(
-    app_driver *driver,
-    gpio_num_t button_gpio,
-    light_inputs *inputs,
-    light_button_source button_source
-) {
+esp_err_t app_driver_init_button(gpio_num_t button_gpio) {
     gpio_config_t button_config;
     esp_err_t err;
+    int idx = gpio_to_index(button_gpio);
 
-    if (driver == NULL || inputs == NULL) {
+    if (idx < 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    driver->button_gpio = button_gpio;
-    driver->inputs = inputs;
-    driver->button_source = button_source;
-    if (button_source == LIGHT_BUTTON_B) {
-        driver->inputs->button_b_press_event = false;
-    } else {
-        driver->inputs->button_a_press_event = false;
+    if (s_button_registered[idx]) {
+        return ESP_OK;
     }
 
     button_config.pin_bit_mask = 1ULL << button_gpio;
@@ -61,11 +67,15 @@ esp_err_t app_driver_init_button(
         return err;
     }
 
-    err = gpio_isr_handler_add(button_gpio, button_isr_handler, driver);
+    err = gpio_isr_handler_add(button_gpio, button_isr_handler, (void *)(intptr_t)idx);
     if (err != ESP_OK) {
         return err;
     }
 
+    portENTER_CRITICAL(&s_driver_lock);
+    s_button_registered[idx] = 1;
+    s_button_event[idx] = 0;
+    portEXIT_CRITICAL(&s_driver_lock);
     return ESP_OK;
 }
 
@@ -87,7 +97,105 @@ esp_err_t app_driver_init_light(gpio_num_t light_gpio) {
     return gpio_set_level(light_gpio, 0);
 }
 
-void app_driver_set_light(const app_driver *driver, gpio_num_t light_gpio, int enabled) {
-    (void)driver;
+void app_driver_set_light(gpio_num_t light_gpio, int enabled) {
     gpio_set_level(light_gpio, enabled ? 1 : 0);
 }
+
+esp_err_t app_driver_trigger_button(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    portENTER_CRITICAL(&s_driver_lock);
+    if (!s_button_registered[idx]) {
+        portEXIT_CRITICAL(&s_driver_lock);
+        return ESP_ERR_INVALID_ARG;
+    }
+    s_button_event[idx] = 1;
+    portEXIT_CRITICAL(&s_driver_lock);
+    return ESP_OK;
+}
+
+bool app_driver_latch_button_event(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+    bool value;
+
+    if (idx < 0) {
+        return false;
+    }
+
+    portENTER_CRITICAL(&s_driver_lock);
+    value = s_button_registered[idx] != 0 && s_button_event[idx] != 0;
+    portEXIT_CRITICAL(&s_driver_lock);
+    return value;
+}
+
+void app_driver_clear_button_event(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0) {
+        return;
+    }
+
+    portENTER_CRITICAL(&s_driver_lock);
+    if (s_button_registered[idx]) {
+        s_button_event[idx] = 0;
+    }
+    portEXIT_CRITICAL(&s_driver_lock);
+}
+
+#else
+
+esp_err_t app_driver_init_button(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s_button_registered[idx] = 1;
+    s_button_event[idx] = 0;
+    return ESP_OK;
+}
+
+esp_err_t app_driver_init_light(gpio_num_t light_gpio) {
+    return ESP_OK;
+}
+
+void app_driver_set_light(gpio_num_t light_gpio, int enabled) {
+}
+
+esp_err_t app_driver_trigger_button(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0 || !s_button_registered[idx]) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s_button_event[idx] = 1;
+    return ESP_OK;
+}
+
+bool app_driver_latch_button_event(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0 || !s_button_registered[idx]) {
+        return false;
+    }
+
+    return s_button_event[idx] != 0;
+}
+
+void app_driver_clear_button_event(gpio_num_t button_gpio) {
+    int idx = gpio_to_index(button_gpio);
+
+    if (idx < 0 || !s_button_registered[idx]) {
+        return;
+    }
+
+    s_button_event[idx] = 0;
+}
+
+#endif

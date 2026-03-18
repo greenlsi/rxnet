@@ -1,27 +1,35 @@
 #include "rxnet/runtime.h"
 
 #include <stdlib.h>
-#include <string.h>
 
-int rx_context_init(rx_context *ctx, void *inputs, size_t inputs_size) {
+static void rx_runtime_noop_node_phase(rx_node *node, rx_context *ctx) {
+}
+
+int rx_context_init(rx_context *ctx) {
     if (ctx == NULL) {
         return -1;
     }
 
-    ctx->inputs_size = inputs_size;
-    ctx->inputs = inputs;
-    ctx->latched_inputs = calloc(1, inputs_size);
-    ctx->deferred_capacity = 8;
-    ctx->deferred_actions = calloc(ctx->deferred_capacity, sizeof(*ctx->deferred_actions));
+    ctx->deferred_capacity = RXNET_MAX_DEFERRED_ACTIONS;
+    ctx->deferred_actions = ctx->deferred_actions_storage;
     ctx->deferred_count = 0;
 
-    if ((inputs_size > 0 && (inputs == NULL || ctx->latched_inputs == NULL)) ||
-        ctx->deferred_actions == NULL) {
-        rx_context_free(ctx);
-        return -1;
+    return 0;
+}
+
+rx_context *rx_context_create(void) {
+    rx_context *ctx = (rx_context *)malloc(sizeof(*ctx));
+
+    if (ctx == NULL) {
+        return NULL;
     }
 
-    return 0;
+    if (rx_context_init(ctx) != 0) {
+        free(ctx);
+        return NULL;
+    }
+
+    return ctx;
 }
 
 void rx_context_free(rx_context *ctx) {
@@ -29,43 +37,27 @@ void rx_context_free(rx_context *ctx) {
         return;
     }
 
-    /* inputs buffer ownership belongs to the application */
-    free(ctx->latched_inputs);
-    free(ctx->deferred_actions);
-
-    ctx->inputs = NULL;
-    ctx->latched_inputs = NULL;
-    ctx->inputs_size = 0;
     ctx->deferred_actions = NULL;
     ctx->deferred_count = 0;
     ctx->deferred_capacity = 0;
 }
 
-void rx_context_latch_inputs(rx_context *ctx) {
-    if (ctx == NULL || ctx->inputs_size == 0) {
+void rx_context_destroy(rx_context *ctx) {
+    if (ctx == NULL) {
         return;
     }
 
-    memcpy(ctx->latched_inputs, ctx->inputs, ctx->inputs_size);
+    rx_context_free(ctx);
+    free(ctx);
 }
 
 int rx_context_enqueue_deferred_action(rx_context *ctx, rx_deferred_action_fn fn, void *user) {
-    size_t new_capacity;
-    void *new_actions;
-
     if (ctx == NULL || fn == NULL) {
         return -1;
     }
 
     if (ctx->deferred_count >= ctx->deferred_capacity) {
-        new_capacity = ctx->deferred_capacity == 0 ? 8 : ctx->deferred_capacity * 2;
-        new_actions = realloc(ctx->deferred_actions, new_capacity * sizeof(*ctx->deferred_actions));
-        if (new_actions == NULL) {
-            return -1;
-        }
-
-        ctx->deferred_actions = new_actions;
-        ctx->deferred_capacity = new_capacity;
+        return -1;
     }
 
     ctx->deferred_actions[ctx->deferred_count].fn = fn;
@@ -92,18 +84,31 @@ int rx_runtime_init(rx_runtime *rt, rx_context *ctx, size_t node_capacity) {
     if (rt == NULL || ctx == NULL) {
         return -1;
     }
-
-    rt->ctx = ctx;
-    rt->nodes = calloc(node_capacity, sizeof(*rt->nodes));
-    rt->node_count = 0;
-    rt->node_capacity = node_capacity;
-
-    if (node_capacity > 0 && rt->nodes == NULL) {
-        rx_runtime_free(rt);
+    if (node_capacity > RXNET_MAX_RUNTIME_NODES) {
         return -1;
     }
 
+    rt->ctx = ctx;
+    rt->nodes = rt->nodes_storage;
+    rt->node_count = 0;
+    rt->node_capacity = node_capacity;
+
     return 0;
+}
+
+rx_runtime *rx_runtime_create(rx_context *ctx, size_t node_capacity) {
+    rx_runtime *rt = (rx_runtime *)malloc(sizeof(*rt));
+
+    if (rt == NULL) {
+        return NULL;
+    }
+
+    if (rx_runtime_init(rt, ctx, node_capacity) != 0) {
+        free(rt);
+        return NULL;
+    }
+
+    return rt;
 }
 
 void rx_runtime_free(rx_runtime *rt) {
@@ -111,15 +116,29 @@ void rx_runtime_free(rx_runtime *rt) {
         return;
     }
 
-    free(rt->nodes);
     rt->ctx = NULL;
     rt->nodes = NULL;
     rt->node_count = 0;
     rt->node_capacity = 0;
 }
 
-int rx_runtime_add_node(rx_runtime *rt, rx_node node) {
-    if (rt == NULL || node.vtable == NULL || node.self == NULL) {
+void rx_runtime_destroy(rx_runtime *rt) {
+    if (rt == NULL) {
+        return;
+    }
+
+    rx_runtime_free(rt);
+    free(rt);
+}
+
+int rx_runtime_add_node(rx_runtime *rt, rx_node *node) {
+    if (rt == NULL || node == NULL || node->vtable == NULL) {
+        return -1;
+    }
+    if (node->vtable->latch_inputs == NULL ||
+        node->vtable->evaluate == NULL ||
+        node->vtable->commit == NULL ||
+        node->vtable->dump_outputs == NULL) {
         return -1;
     }
 
@@ -131,6 +150,22 @@ int rx_runtime_add_node(rx_runtime *rt, rx_node node) {
     return 0;
 }
 
+void rx_node_set_latch_inputs_callback(rx_node *node, rx_node_phase_fn cb) {
+    if (node == NULL) {
+        return;
+    }
+
+    node->latch_inputs_cb = cb == NULL ? rx_runtime_noop_node_phase : cb;
+}
+
+void rx_node_set_dump_outputs_callback(rx_node *node, rx_node_phase_fn cb) {
+    if (node == NULL) {
+        return;
+    }
+
+    node->dump_outputs_cb = cb == NULL ? rx_runtime_noop_node_phase : cb;
+}
+
 int rx_tick(rx_runtime *rt) {
     size_t i;
 
@@ -138,16 +173,23 @@ int rx_tick(rx_runtime *rt) {
         return -1;
     }
 
-    rx_context_latch_inputs(rt->ctx);
-
     for (i = 0; i < rt->node_count; ++i) {
-        rt->nodes[i].vtable->evaluate(rt->nodes[i].self, rt->ctx);
+        rt->nodes[i]->vtable->latch_inputs(rt->nodes[i], rt->ctx);
     }
 
     for (i = 0; i < rt->node_count; ++i) {
-        rt->nodes[i].vtable->commit(rt->nodes[i].self, rt->ctx);
+        rt->nodes[i]->vtable->evaluate(rt->nodes[i], rt->ctx);
+    }
+
+    for (i = 0; i < rt->node_count; ++i) {
+        rt->nodes[i]->vtable->commit(rt->nodes[i], rt->ctx);
     }
 
     rx_context_run_deferred_actions(rt->ctx);
+
+    for (i = 0; i < rt->node_count; ++i) {
+        rt->nodes[i]->vtable->dump_outputs(rt->nodes[i], rt->ctx);
+    }
+
     return 0;
 }

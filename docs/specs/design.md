@@ -68,18 +68,19 @@ The system follows a layered runtime architecture:
 
 **Key Interfaces (C):**
 ```c
+typedef struct rx_node rx_node;
+
 typedef struct rx_node_vtable {
-    void (*evaluate)(void *node, rx_context *ctx);
-    void (*commit)(void *node, rx_context *ctx);
+    void (*evaluate)(rx_node *node, rx_context *ctx);
+    void (*commit)(rx_node *node, rx_context *ctx);
 } rx_node_vtable;
 
 typedef struct rx_node {
     const rx_node_vtable *vtable;
-    void *self;
 } rx_node;
 
 int rx_runtime_init(rx_runtime *rt, rx_context *ctx, size_t node_capacity);
-int rx_runtime_add_node(rx_runtime *rt, rx_node node);
+int rx_runtime_add_node(rx_runtime *rt, rx_node *node);
 int rx_tick(rx_runtime *rt);
 void rx_runtime_free(rx_runtime *rt);
 ```
@@ -106,6 +107,8 @@ class Runtime:
 - C latching is byte-copy (`memcpy`) using explicit `inputs_size`
 - Python latching is shallow copy (`copy.copy`)
 - Live input ownership remains external in C
+- C context uses fixed-size arrays configured in `rxnet/config.h` for latched inputs and deferred actions
+- C deferred-action queue capacity is fixed at initialization from configured maxima; enqueue returns error on overflow (no `malloc`/`realloc` during tick)
 
 **Key Interfaces:**
 ```c
@@ -131,13 +134,22 @@ class Context:
 - Define machine transitions (`from_state`, `to_state`, `guard`, `action`)
 - Evaluate first valid transition in declaration order
 - Commit next state and enqueue optional deferred action
-- Support optional C inputs projection hook per machine
+- Read shared latched inputs from context in guards/actions
 
 **Key Interfaces (C):**
 ```c
+typedef struct rx_fsm_runtime {
+    rx_runtime runtime; /* base runtime (first member) */
+    rx_context context;
+} rx_fsm_runtime;
+
+typedef struct rx_fsm_machine {
+    rx_node node; /* base node */
+    /* ... */
+} rx_fsm_machine;
+
 typedef int (*rx_fsm_guard_fn)(const rx_fsm_context *ctx, void *user);
 typedef void (*rx_fsm_action_fn)(rx_fsm_context *ctx, void *user);
-typedef void (*rx_fsm_inputs_projector_fn)(const rx_fsm_context *ctx, void *user);
 
 void rx_fsm_machine_init(
     rx_fsm_machine *machine,
@@ -147,9 +159,11 @@ void rx_fsm_machine_init(
     size_t transition_count,
     void *user
 );
-void rx_fsm_machine_set_inputs_projector(rx_fsm_machine *machine, rx_fsm_inputs_projector_fn projector);
 int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine);
 int rx_fsm_tick(rx_fsm_runtime *runtime);
+
+rx_fsm_machine *rx_fsm_machine_create(/* same args as init */);
+void rx_fsm_machine_destroy(rx_fsm_machine *machine);
 ```
 
 **Key Interfaces (Python):**
@@ -179,6 +193,16 @@ class Machine:
 
 **Key Interfaces (C):**
 ```c
+typedef struct rx_pn_runtime {
+    rx_runtime runtime; /* base runtime (first member) */
+    rx_context context;
+} rx_pn_runtime;
+
+typedef struct rx_pn_net {
+    rx_node node; /* base node */
+    /* ... */
+} rx_pn_net;
+
 typedef struct rx_pn_arc {
     size_t place_id;
     int weight;
@@ -204,6 +228,9 @@ int rx_pn_net_init(
 );
 int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net);
 int rx_pn_tick(rx_pn_runtime *runtime);
+
+rx_pn_net *rx_pn_net_create(/* same args as init */);
+void rx_pn_net_destroy(rx_pn_net *net);
 ```
 
 **Key Interfaces (Python):**
@@ -240,6 +267,47 @@ class Net:
 - Host CLI loop for manual event injection and status inspection
 - Embedded periodic loop (ESP-IDF `vTaskDelayUntil`) with ISR-updated inputs
 - Python script loops with explicit input driver objects
+
+### Reusable CLI FSM Utility (C Example Layer)
+
+**Responsibilities:**
+- Run non-blocking character intake from `stdin` inside an FSM machine
+- Buffer command line input and dispatch handlers on Enter
+- Provide command registration API with per-command `user_data`
+- Provide machine-level `user_data` and optional per-tick hook for integration-specific logic
+- Encapsulate terminal raw mode lifecycle (enter/restore) inside the utility
+
+**Key Interfaces (C):**
+```c
+typedef struct cli_machine_data cli_machine_data;
+
+typedef void (*cli_fsm_command_fn)(
+    rx_fsm_context *ctx,
+    cli_machine_data *cli,
+    const char *command,
+    void *command_user_data
+);
+
+typedef void (*cli_fsm_tick_fn)(
+    const rx_fsm_context *ctx,
+    cli_machine_data *cli,
+    void *user_data
+);
+
+void cli_fsm_data_init(cli_machine_data *data, void *user_data);
+int cli_fsm_register_command(
+    cli_machine_data *data,
+    const char *name,
+    cli_fsm_command_fn handler,
+    void *command_user_data
+);
+void cli_fsm_create(rx_fsm_machine *machine, const char *name, cli_machine_data *data);
+```
+
+**Design Notes:**
+- `main_cli.c` remains focused on runtime wiring and periodic ticking; command semantics live in command handlers.
+- The CLI utility is reusable across examples because it has no domain-specific references.
+- Command handlers can use both machine-level `cli->user_data` and per-command `command_user_data` depending on reuse needs.
 
 ## Data Models
 
@@ -328,13 +396,21 @@ interface PNArcModel {
 *For any* completed tick, deferred queue length should be zero after running deferred actions.
 **Validates: Requirements 3.3**
 
+### Property 4b: Deferred Queue Overflow Determinism (C)
+*For any* C runtime tick where deferred enqueue exceeds configured capacity, enqueue should return `-1` and perform no dynamic allocation.
+**Validates: Requirements 3.4, 3.6, 12.6**
+
 ### Property 5: Runtime Node Contract Safety
 *For any* node registered in the runtime, `evaluate` and `commit` should both be callable in every tick.
 **Validates: Requirements 4.1**
 
 ### Property 6: C Node Capacity Enforcement
 *For any* C runtime initialized with capacity `N`, adding more than `N` nodes should fail with `-1`.
-**Validates: Requirements 4.2, 4.3**
+**Validates: Requirements 4.2, 4.3, 4.6**
+
+### Property 6b: C Init Capacity Bound Checks
+*For any* C runtime/context initialization with capacities greater than configured maxima, initialization should fail with `-1`.
+**Validates: Requirements 2.6, 4.6, 12.7**
 
 ### Property 7: FSM First-Match Transition Rule
 *For any* FSM machine and state, transition selection should be the first declaration-order transition that matches state and guard.
@@ -348,8 +424,8 @@ interface PNArcModel {
 *For any* matched FSM transition with action, the action should be queued for deferred execution, not run inline.
 **Validates: Requirements 5.5**
 
-### Property 10: FSM Inputs Projector Invocation
-*For any* C FSM machine with configured projector, projector should run before transition guard checks.
+### Property 10: FSM Shared Input Access
+*For any* C FSM machine, guards should read from shared `latched_inputs` and not mutate it.
 **Validates: Requirements 6.1, 6.2, 6.3**
 
 ### Property 11: PN Transition Enablement
@@ -403,7 +479,7 @@ interface PNArcModel {
 
 **2. Allocation and Resource Errors (C)**
 - Context buffer allocation failure
-- Deferred queue growth failure
+- Deferred queue capacity exhaustion (enqueue rejection)
 - Net internal array allocation failure
 
 **3. Model Validation Errors (Python exception based)**
@@ -474,7 +550,7 @@ def test_fsm_first_match_ordering(transitions):
 **Cross-layer integration:**
 - Host inputs mutation -> runtime tick -> state update -> deferred side effects
 - Multiple nodes sharing one context input struct
-- C FSM projector-based input mapping with shared global input
+- C FSM guards reading shared latched inputs
 
 **Environment integration:**
 - C host example builds (`gcc`) for FSM and PN

@@ -25,8 +25,8 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Implement `inputs` + `latched_inputs` model and ownership boundaries
     - _Requirements: 1.1, 2.1, 2.2, 2.3, 2.5, 9.4_
   - [x] 2.2 Implement deferred action queue
-    - Add enqueue/run APIs with dynamic capacity growth
-    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+    - Add enqueue/run APIs with fixed-capacity bounded behavior in C
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 12.6_
   - [x] 2.3 Implement generic runtime node orchestration
     - Add runtime init/add/tick/free and phase ordering
     - _Requirements: 1.2, 1.3, 1.4, 1.5, 4.1, 4.2, 4.3, 4.5_
@@ -39,9 +39,9 @@ Tasks are marked as completed when they reflect the current repository state, an
   - [x] 3.2 Implement FSM runtime wrapper
     - Runtime init/free, machine registration, tick wrapper
     - _Requirements: 9.1, 9.2_
-  - [x] 3.3 Implement optional inputs projector hook
-    - Add per-machine projector called before guard evaluation
-    - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
+  - [x] 3.3 Implement shared-input guard access
+    - Read shared latched inputs directly from FSM guards/actions
+    - _Requirements: 6.1, 6.2, 6.3_
 
 - [x] 4. Implement Petri Net frontend (C)
   - [x] 4.1 Implement PN net model and transition execution
@@ -87,8 +87,8 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Add deterministic sample flows for state/token updates
     - _Requirements: 11.1, 12.3, 12.4_
   - [x] 7.2 Implement C FSM 00-light host CLI and ESP-IDF variants
-    - Shared input struct + machine-local projection pattern
-    - _Requirements: 6.4, 11.4, 11.5, 12.3, 12.5_
+    - Shared input struct consumed directly by machine guards
+    - _Requirements: 6.1, 11.4, 11.5, 12.3, 12.5_
   - [x] 7.3 Implement Python FSM and PN examples
     - Split model/system/main integration structure
     - _Requirements: 11.2, 11.3, 12.3, 12.5_
@@ -106,7 +106,7 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Tick ordering, deferred queue, capacity limits, null-safety checks
     - _Requirements: 1.1, 1.5, 3.3, 4.3, 4.5, 9.5_
   - [ ] 9.2 Add FSM semantic tests
-    - First-match ordering, projector invocation, no-match stability
+    - First-match ordering, shared-input guard reads, no-match stability
     - _Requirements: 5.2, 5.3, 6.2_
   - [ ] 9.3 Add PN semantic/validation tests
     - Arc validation, token constraints, delta correctness, net lifecycle
@@ -163,6 +163,72 @@ Tasks are marked as completed when they reflect the current repository state, an
   - [ ] 14.3 Establish “requirements-first” change workflow
     - PR checklist rule: update `requirements.md` before behavioral code changes
     - _Requirements: All requirements governance_
+
+- [x] 15. Reflect reusable CLI FSM changes in specifications
+  - [x] 15.1 Update requirements for reusable CLI FSM contract
+    - Capture command registry API, raw mode encapsulation, and user data behavior
+    - _Requirements: 11.5, 13.1, 13.2, 13.3, 13.4, 13.5_
+  - [x] 15.2 Update design for reusable CLI FSM architecture and interfaces
+    - Document generic CLI FSM responsibilities and public C interfaces
+    - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5_
+  - [x] 15.3 Verify implementation plan alignment
+    - Ensure task tracking reflects the new specification state
+    - _Requirements: All requirements traceability_
+
+- [x] 16. Enforce no dynamic allocation during C tick path
+  - [x] 16.1 Update deferred queue implementation to fixed-capacity behavior
+    - Remove runtime `realloc` from deferred enqueue path and reject overflow deterministically
+    - _Requirements: 3.4, 3.6, 12.6_
+  - [x] 16.2 Update specs and traceability for bounded deferred queue
+    - Align requirement/design/task wording with fixed-capacity queue model
+    - _Requirements: 3.4, 3.6, 12.6_
+  - [x] 16.3 Build-check C examples after memory policy change
+    - Verify FSM and PN examples still compile cleanly
+    - _Requirements: 11.1, 12.1_
+
+- [x] 17. Configure fixed C runtime arrays via config header
+  - [x] 17.1 Add `rxnet/config.h` with runtime capacity macros
+    - Define compile-time maxima for latched inputs, deferred queue, and runtime nodes
+    - _Requirements: 12.7_
+  - [x] 17.2 Refactor C runtime context/node storage to fixed arrays
+    - Replace heap-backed runtime core buffers with arrays bounded by config macros
+    - _Requirements: 2.6, 3.4, 3.6, 4.6, 12.6, 12.7_
+  - [x] 17.3 Validate examples build after fixed-array migration
+    - Compile FSM/PN examples to confirm compatibility
+    - _Requirements: 11.1, 12.1_
+
+- [x] 18. Migrate C node model to embedding + add init/create API pair
+  - [x] 18.1 Refactor core runtime node API to typed embedded-node pointers
+    - Remove `void* self` adapter pattern and store `rx_node*` in runtime registry
+    - _Requirements: 4.1, 14.1, 14.4, 14.5_
+  - [x] 18.2 Update FSM/PN structs to embed `rx_node` base
+    - Make FSM and PN runtime registration use the embedded base member
+    - _Requirements: 14.2, 14.3, 14.4_
+  - [x] 18.3 Add `_create`/`_destroy` convenience APIs alongside `_init`
+    - Implement create/destroy pairs for runtime/model entities while preserving init APIs
+    - _Requirements: 9.1, 9.6, 15.1, 15.2, 15.3, 15.4, 15.5_
+  - [x] 18.4 Build-check C examples after API refactor
+    - Confirm all C examples still compile and run
+    - _Requirements: 11.1, 12.1_
+
+- [x] 19. Migrate canonical C examples to `_create/_destroy` APIs
+  - [x] 19.1 Update FSM console example to use create/destroy lifecycle
+    - Replace stack+init/free pattern with create/destroy pattern for runtime and machines
+    - _Requirements: 11.1, 15.1, 15.2, 15.3_
+  - [x] 19.2 Update PN console example to use create/destroy lifecycle
+    - Replace stack+init/free pattern with create/destroy pattern for runtime and net
+    - _Requirements: 11.1, 15.1, 15.2, 15.3_
+  - [x] 19.3 Build-check updated examples
+    - Compile and execute both examples after migration
+    - _Requirements: 11.1, 12.1_
+
+- [x] 20. Reorder C frontend runtime wrappers for base-runtime upcast
+  - [x] 20.1 Place `rx_runtime` as first member in FSM/PN runtime wrappers
+    - Enable safe upcast from frontend runtime pointer to base runtime pointer
+    - _Requirements: 14.6_
+  - [x] 20.2 Build-check C examples after wrapper layout change
+    - Ensure no behavioral regressions from struct field reordering
+    - _Requirements: 11.1, 12.1_
 
 ## Notes
 

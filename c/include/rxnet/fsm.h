@@ -15,7 +15,7 @@ typedef struct rx_fsm_transition rx_fsm_transition;
 
 typedef int (*rx_fsm_guard_fn)(const rx_fsm_context *ctx, void *user);
 typedef void (*rx_fsm_action_fn)(rx_fsm_context *ctx, void *user);
-typedef void (*rx_fsm_inputs_projector_fn)(const rx_fsm_context *ctx, void *user);
+typedef void (*rx_fsm_node_phase_fn)(rx_fsm_context *ctx, void *user);
 
 struct rx_fsm_transition {
     int from_state;
@@ -25,28 +25,32 @@ struct rx_fsm_transition {
 };
 
 struct rx_fsm_machine {
+    rx_node node;
     const char *name;
     int state;
-    int next_state;
     const rx_fsm_transition *transitions;
     size_t transition_count;
     void *user;
+    int next_state;
     rx_fsm_action_fn proposed_action;
-    rx_fsm_inputs_projector_fn inputs_projector;
+    rx_fsm_node_phase_fn latch_inputs;
+    rx_fsm_node_phase_fn dump_outputs;
 };
 
 struct rx_fsm_runtime {
-    rx_context context;
     rx_runtime runtime;
+    rx_context context;
 };
 
 int rx_fsm_runtime_init(
     rx_fsm_runtime *runtime,
-    void *inputs,
-    size_t inputs_size,
+    size_t machine_capacity
+);
+rx_fsm_runtime *rx_fsm_runtime_create(
     size_t machine_capacity
 );
 void rx_fsm_runtime_free(rx_fsm_runtime *runtime);
+void rx_fsm_runtime_destroy(rx_fsm_runtime *runtime);
 
 void rx_fsm_machine_init(
     rx_fsm_machine *machine,
@@ -54,9 +58,20 @@ void rx_fsm_machine_init(
     int initial_state,
     const rx_fsm_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_fsm_node_phase_fn latch_inputs,
+    rx_fsm_node_phase_fn dump_outputs
 );
-void rx_fsm_machine_set_inputs_projector(rx_fsm_machine *machine, rx_fsm_inputs_projector_fn projector);
+rx_fsm_machine *rx_fsm_machine_create(
+    const char *name,
+    int initial_state,
+    const rx_fsm_transition *transitions,
+    size_t transition_count,
+    void *user,
+    rx_fsm_node_phase_fn latch_inputs,
+    rx_fsm_node_phase_fn dump_outputs
+);
+void rx_fsm_machine_destroy(rx_fsm_machine *machine);
 
 int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine);
 int rx_fsm_tick(rx_fsm_runtime *runtime);

@@ -5,29 +5,33 @@
 The C implementation has a shared internal runtime by phases:
 
 - `include/rxnet/runtime.h`, `src/runtime.c`
-- phase order per tick: latch inputs -> evaluate all nodes -> commit all nodes -> run deferred actions
+- phase order per tick: node latch inputs -> evaluate all nodes -> commit all nodes -> run deferred actions -> node dump outputs
 
 Model frontends:
 
 - FSM: `include/rxnet/fsm.h`, `src/fsm.c`
 - Petri Net: `include/rxnet/pn.h`, `src/pn.c`
 
-Both use typed application inputs via context buffers:
+Inputs/outputs are model-owned and typically carried through each node `user` payload.
+Each node can implement its own `latch_inputs` / `dump_outputs` callbacks through the base `rx_node_vtable`.
 
-- `ctx->inputs`: mutable live inputs (owned by application)
-- `ctx->latched_inputs`: immutable snapshot for the current tick
-- `ctx->inputs_size`: bytes copied during latch
+Runtime init requires only node capacity:
 
-Runtime init requires external inputs:
-
-- `rx_fsm_runtime_init(runtime, inputs_ptr, inputs_size, machine_capacity)`
-- `rx_pn_runtime_init(runtime, inputs_ptr, inputs_size, net_capacity)`
+- `rx_fsm_runtime_init(runtime, machine_capacity)`
+- `rx_pn_runtime_init(runtime, net_capacity)`
 
 ## Build FSM example
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic -Iinclude src/runtime.c src/fsm.c examples/example.c -o fsm_example
-./fsm_example
+make -C c fsm_example
+./c/fsm_example
+```
+
+## Host/macOS CLI build (without ESP-IDF)
+
+```bash
+make -C c light_cli
+./c/light_cli
 ```
 
 ## ESP-IDF FSM example
@@ -43,6 +47,6 @@ This example shows periodic `rx_fsm_tick()` activation with `vTaskDelayUntil(...
 ## Build Petri Net example
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic -Iinclude src/runtime.c src/pn.c examples/pn_example.c -o pn_example
-./pn_example
+make -C c pn_example
+./c/pn_example
 ```

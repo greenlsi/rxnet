@@ -5,14 +5,15 @@ This example models three light state machines:
 - light A and light B share button A
 - light C uses button B independently
 - each light is a separate FSM machine
-- one shared app input struct (`light_inputs`) is latched globally per tick
-- each machine projects shared app input into machine-local input before guard evaluation
+- each machine receives a pointer to its button event flag
+- each machine latches its own event and clears that flag in `dump_outputs`
 
 ## Files
 
 - `main.c`: ESP-IDF periodic loop
-- `main_cli.c`: host/macOS CLI loop
-- `light_fsm.c/.h`: FSM constructor, input projection, guards, actions
+- `main_cli.c`: host/macOS runtime loop (registers FSMs and ticks periodically)
+- `cli_fsm.c/.h`: reusable CLI FSM (raw mode, cmdline handling, command registry, per-command user_data)
+- `light_fsm.c/.h`: reusable FSM constructor with private machine data and node-phase callbacks
 - `app_driver.c/.h`: ESP-IDF GPIO + ISR
 
 ## ESP-IDF wiring
@@ -26,17 +27,16 @@ This example models three light state machines:
 ## Host/macOS CLI build
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic \
-  -I../../../include \
-  ../../../src/runtime.c ../../../src/fsm.c \
-  light_fsm.c main_cli.c -o light_cli
-./light_cli
+make -C c light_cli
+./c/light_cli
 ```
 
 CLI commands:
 
 - `a` or `press a`: trigger shared button A (affects lights A and B)
 - `b` or `press b`: trigger button B (affects light C)
-- `tick`: run one periodic tick with no button press
 - `status`: print machine/output status
 - `quit`: exit
+- `tick`: no-op (ticks are already periodic)
+
+`main_cli.c` registers these commands with `cli_fsm_register_command(...)`.
