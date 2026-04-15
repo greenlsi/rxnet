@@ -7,6 +7,7 @@ from .runtime import Context, Runtime as CoreRuntime
 
 Guard = Callable[[Context, Any], bool]
 Action = Callable[[Context, Any], None]
+NodePhaseCb = Callable[[Context, Any], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,11 +24,17 @@ class Machine:
     state: int
     transitions: Sequence[Transition]
     user: Any = None
+    latch_inputs_cb: Optional[NodePhaseCb] = None
+    dump_outputs_cb: Optional[NodePhaseCb] = None
     _next_state: int = field(init=False, repr=False)
     _proposed_action: Optional[Action] = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._next_state = self.state
+
+    def latch_inputs(self, ctx: Context) -> None:
+        if self.latch_inputs_cb is not None:
+            self.latch_inputs_cb(ctx, self.user)
 
     def evaluate(self, ctx: Context) -> None:
         self._next_state = self.state
@@ -47,11 +54,15 @@ class Machine:
         if self._proposed_action is not None:
             ctx.enqueue_deferred_action(self._proposed_action, self.user)
 
+    def dump_outputs(self, ctx: Context) -> None:
+        if self.dump_outputs_cb is not None:
+            self.dump_outputs_cb(ctx, self.user)
+
 
 class Runtime:
     __slots__ = ("_core",)
 
-    def __init__(self, inputs: Any) -> None:
+    def __init__(self, inputs: Any = None) -> None:
         self._core = CoreRuntime(inputs)
 
     @property

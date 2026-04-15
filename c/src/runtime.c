@@ -3,6 +3,8 @@
 #include <stdlib.h>
 
 static void rx_runtime_noop_node_phase(rx_node *node, rx_context *ctx) {
+    (void)node;
+    (void)ctx;
 }
 
 int rx_context_init(rx_context *ctx) {

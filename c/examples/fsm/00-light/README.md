@@ -28,7 +28,7 @@ This example models three light state machines:
 
 ```bash
 make -C c light_cli
-./c/light_cli
+./c/build/fsm_00_light
 ```
 
 CLI commands:

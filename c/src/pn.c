@@ -4,6 +4,8 @@
 #include <string.h>
 
 static void rx_pn_noop_node_phase(rx_node *node, rx_context *ctx) {
+    (void)node;
+    (void)ctx;
 }
 
 static int rx_pn_validate_arc_list(const rx_pn_net *net, const rx_pn_arc *arcs, size_t arc_count) {
@@ -22,6 +24,13 @@ static int rx_pn_validate_arc_list(const rx_pn_net *net, const rx_pn_arc *arcs, 
     return 0;
 }
 
+/*
+ * Check whether a transition can fire given the current next_places.
+ * Called during evaluate in declaration order; next_places is updated
+ * immediately when each transition fires, so earlier transitions in
+ * conflict consume tokens before later ones can see them (greedy
+ * sequential / first-match semantics).
+ */
 static int rx_pn_transition_enabled(const rx_pn_net *net, const rx_pn_transition *transition) {
     size_t i;
 
@@ -33,7 +42,7 @@ static int rx_pn_transition_enabled(const rx_pn_net *net, const rx_pn_transition
     for (i = 0; i < transition->consume_count; ++i) {
         const rx_pn_arc *arc = &transition->consume[i];
 
-        if (net->places[arc->place_id] < arc->weight) {
+        if (net->next_places[arc->place_id] < arc->weight) {
             return 0;
         }
     }
@@ -80,6 +89,10 @@ static void rx_pn_net_evaluate(rx_node *node, rx_context *ctx) {
         }
 
         net->fire_flags[t] = 1;
+        /* Apply delta immediately so subsequent transitions see the updated
+         * token counts. This implements greedy sequential semantics: earlier
+         * transitions in declaration order have priority over later ones. */
+        rx_pn_apply_transition_delta(net, transition);
     }
 }
 
@@ -87,19 +100,19 @@ static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
     rx_pn_net *net = (rx_pn_net *)node;
     size_t t;
 
+    /* Token deltas were already applied to next_places during evaluate.
+     * Commit the result and enqueue deferred actions for transitions that fired. */
+    memcpy(net->places, net->next_places, net->place_count * sizeof(int));
+
     for (t = 0; t < net->transition_count; ++t) {
         if (!net->fire_flags[t]) {
             continue;
         }
 
-        rx_pn_apply_transition_delta(net, &net->transitions[t]);
-
         if (net->transitions[t].action != NULL) {
             rx_context_enqueue_deferred_action(ctx, net->transitions[t].action, net->user);
         }
     }
-
-    memcpy(net->places, net->next_places, net->place_count * sizeof(int));
 }
 
 static void rx_pn_net_dump_outputs(rx_node *node, rx_context *ctx) {

@@ -20,18 +20,35 @@ Runtime init requires only node capacity:
 - `rx_fsm_runtime_init(runtime, machine_capacity)`
 - `rx_pn_runtime_init(runtime, net_capacity)`
 
-## Build FSM example
-
-```bash
-make -C c fsm_example
-./c/fsm_example
-```
-
 ## Host/macOS CLI build (without ESP-IDF)
 
 ```bash
 make -C c light_cli
-./c/light_cli
+./c/build/fsm_00_light
+```
+
+```bash
+make -C c auto_cli
+./c/build/fsm_01_auto
+```
+
+```bash
+make -C c blink_cli
+./c/build/fsm_02_blink
+```
+
+```bash
+make -C c mix_cli
+./c/build/fsm_03_mix
+```
+
+## Petri Net Async Examples
+
+Examples live under `c/examples/pn/00-...`, `c/examples/pn/01-...`, etc.
+
+```bash
+make -C c pn_00_queue
+./c/build/pn_00_queue
 ```
 
 ## ESP-IDF FSM example
@@ -43,10 +60,3 @@ make -C c light_cli
 - `examples/fsm/00-light/app_driver.h`
 
 This example shows periodic `rx_fsm_tick()` activation with `vTaskDelayUntil(...)` and ISR-driven input updates.
-
-## Build Petri Net example
-
-```bash
-make -C c pn_example
-./c/pn_example
-```

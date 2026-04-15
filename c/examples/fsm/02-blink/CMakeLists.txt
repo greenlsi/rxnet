@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_driver.c"
+        "blink_fsm.c"
+        "../../../src/runtime.c"
+        "../../../src/fsm.c"
+    INCLUDE_DIRS
+        "."
+        "../../../include"
+)
