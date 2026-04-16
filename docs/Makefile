@@ -1,4 +1,4 @@
-pdf: specs-c.pdf specs-python.pdf
+pdf: specs-c.pdf specs-python.pdf user.pdf
 
 PANDOC_FLAGS = \
 	--from markdown \
@@ -30,5 +30,9 @@ specs-python.pdf: specs-python.md specs/python/requirements.md specs/python/desi
 	@echo "Generating $@..."
 	@pandoc $^ -o $@ $(PANDOC_FLAGS)
 
+user.pdf: user.md
+	@echo "Generating $@..."
+	@pandoc $^ -o $@ $(PANDOC_FLAGS)
+
 clean:
-	rm -f specs-c.pdf specs-python.pdf
+	rm -f specs-c.pdf specs-python.pdf user.pdf

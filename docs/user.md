@@ -1,17 +1,9 @@
-# rxnet — Guía para alumnos
-
-## Índice
-
-1. [El problema que resuelve rxnet](#1-el-problema-que-resuelve-rxnet)
-2. [La hipótesis síncrona](#2-la-hipótesis-síncrona)
-3. [El tick y sus fases](#3-el-tick-y-sus-fases)
-4. [Máquinas de estado finito (FSM)](#4-máquinas-de-estado-finito-fsm)
-5. [Redes de Petri (PN)](#5-redes-de-petri-pn)
-6. [Modelos de ejecución concurrente](#6-modelos-de-ejecución-concurrente)
-7. [Cuándo usar FSM, cuándo PN](#7-cuándo-usar-fsm-cuándo-pn)
-8. [Referencia rápida de la API](#8-referencia-rápida-de-la-api)
-
 ---
+title: "rxnet — Guía de usuario"
+subtitle: "FSM y Redes de Petri sobre un runtime síncrono reactivo"
+---
+
+# rxnet — Guía de usuario
 
 ## 1. El problema que resuelve rxnet
 
