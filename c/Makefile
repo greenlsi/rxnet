@@ -19,12 +19,14 @@ PN_04_MIX_BIN    := $(BUILD_DIR)/pn_04_mix
 PN_CLI_SHARED := examples/fsm/00-light/app_driver.c examples/fsm/00-light/cli_fsm.c
 PN_CLI_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/00-light
 
-TEST_RUNTIME_BIN := $(BUILD_DIR)/test_runtime
-TEST_FSM_BIN     := $(BUILD_DIR)/test_fsm
-TEST_PN_BIN      := $(BUILD_DIR)/test_pn
-TEST_BINS        := $(TEST_RUNTIME_BIN) $(TEST_FSM_BIN) $(TEST_PN_BIN)
+TEST_RUNTIME_BIN  := $(BUILD_DIR)/test_runtime
+TEST_FSM_BIN      := $(BUILD_DIR)/test_fsm
+TEST_PN_BIN       := $(BUILD_DIR)/test_pn
+TEST_BINS         := $(TEST_RUNTIME_BIN) $(TEST_FSM_BIN) $(TEST_PN_BIN)
 
-.PHONY: all lib examples test clean
+PARITY_RUNNER_BIN := $(BUILD_DIR)/parity_runner
+
+.PHONY: all lib examples test parity clean
 
 all: lib examples
 
@@ -135,6 +137,11 @@ $(TEST_FSM_BIN): tests/test_fsm.c $(LIB) | $(BUILD_DIR)
 
 $(TEST_PN_BIN): tests/test_pn.c $(LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Itests $< $(LIB) -o $@
+
+$(PARITY_RUNNER_BIN): tests/parity_runner.c $(LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Itests $< $(LIB) -o $@
+
+parity: $(PARITY_RUNNER_BIN)
 
 # ------------------------------------------------------------------ #
 # Install                                                              #

@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^python/
+      - id: ruff-format
+        files: ^python/
+
+  - repo: local
+    hooks:
+      - id: python-tests
+        name: Python unit tests
+        language: system
+        entry: bash -c "cd python && uv run --extra dev pytest tests/ -q"
+        pass_filenames: false
+        types: [python]
+
+      - id: c-tests
+        name: C unit tests (warning-clean)
+        language: system
+        entry: bash -c "cd c && make test --silent"
+        pass_filenames: false
+        types: [c]

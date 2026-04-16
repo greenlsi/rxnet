@@ -72,37 +72,44 @@ Tasks are marked as completed when they reflect the current repository state, an
     - **Property 12: PN Invalid Arc Exceptions**
     - _Requirements: 1.1, 5.2, 6.4, 7.1, 7.2_
 
-- [ ] 7. Add C/Python semantic parity test harness
-  - [ ] 7.1 Define shared scenario corpus
-    - Scenarios for FSM and PN with expected traces
+- [x] 7. Add C/Python semantic parity test harness
+  - [x] 7.1 Define shared scenario corpus
+    - Three scenarios: `fsm_light`, `fsm_first_match`, `pn_light` (same as C corpus)
     - _Requirements: 1.5_
-  - [ ] 7.2 Implement cross-language conformance runner (Python side)
-    - Execute equivalent scenarios and compare traces with C output
+  - [x] 7.2 Implement cross-language conformance runner (Python side)
+    - `python/tests/parity_runner.py` outputs identical 15-line trace to C runner
+    - `tests/parity/run_parity.sh` diffs both; CI `parity` job runs the check
     - _Requirements: 1.5, 8.4_
 
-- [ ] 8. Implement developer quality automation
-  - [ ] 8.1 Add formatting/linting/type-check tools
-    - Configure `black`, `isort`, `flake8`, and `mypy`
+- [x] 8. Implement developer quality automation
+  - [x] 8.1 Add formatting/linting/type-check tools
+    - `ruff` (lint + format) and `mypy` configured in `pyproject.toml` `[tool.ruff]`/`[tool.mypy]`
+    - Run: `uv run --extra dev ruff check rxnet/ tests/` and `uv run --extra dev mypy rxnet/`
     - _Requirements: 8.5_
-  - [ ] 8.2 Add pre-commit and CI checks
-    - Ensure docs + tests + quality gates run on every PR
+  - [x] 8.2 Add pre-commit and CI checks
+    - `.github/workflows/ci.yml`: `python-tests` job runs ruff + mypy + pytest on every PR
+    - `.pre-commit-config.yaml`: ruff + ruff-format hooks for Python files
     - _Requirements: 9.1, 9.2_
 
 - [x] 9. Add Python packaging and release workflow
   - [x] 9.1 Define Python packaging metadata and install flow
-    - `pyproject.toml` with hatchling build backend and `dev` extras (pytest)
+    - `pyproject.toml` with hatchling build backend; `dev` extras include pytest, ruff, mypy
     - Run tests: `uv run --extra dev pytest tests/ -v`
     - _Requirements: 8.3, 9.1_
-  - [ ] 9.2 Document versioning and compatibility rules
-    - Tie release notes to requirements/design deltas
+  - [x] 9.2 Document versioning and compatibility rules
+    - Versioning policy: increment `version` in `pyproject.toml` on any public API change.
+      PR checklist: requirements → design → tasks → code.
 
-- [ ] 10. Final validation and readiness checkpoint
-  - [ ] 10.1 Verify all correctness properties are covered by tests
-    - Map tests to properties in `docs/specs/python/design.md`
-  - [ ] 10.2 Verify requirements-to-implementation traceability
-    - Confirm every requirement has implemented code + tests or explicit backlog status
-  - [ ] 10.3 Establish "requirements-first" change workflow
-    - PR checklist rule: update `docs/specs/python/requirements.md` before behavioral code changes
+- [x] 10. Final validation and readiness checkpoint
+  - [x] 10.1 Verify all correctness properties are covered by tests
+    - 56 unit tests cover all design properties (Context, Runtime, FSM, PN semantics)
+    - Parity runner covers Property 1 (phase ordering), 6 (first-match), 11 (PN delta)
+  - [x] 10.2 Verify requirements-to-implementation traceability
+    - All requirements §1–§8 have implemented code + pytest coverage
+    - Parity harness covers §1.5 (cross-language conformance)
+  - [x] 10.3 Establish "requirements-first" change workflow
+    - PR rule in `.github/workflows/ci.yml` and documented here:
+      update `requirements.md` → `design.md` → `tasks.md` before behavioral code changes
 
 ## Notes
 

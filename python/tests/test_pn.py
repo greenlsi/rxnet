@@ -7,9 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
+
 from rxnet.pn import Arc, Net, Runtime, Transition
 from rxnet.runtime import Context
-
 
 # ------------------------------------------------------------------ #
 # Helpers                                                               #
@@ -313,8 +313,6 @@ class TestCallbacks:
 
     def test_latch_cb_runs_before_evaluate(self) -> None:
         """Tokens added in latch_inputs_cb must be visible during evaluate."""
-        added_in_latch: list[bool] = []
-
         def add_token(ctx: Context, user: Net) -> None:
             user.places[1] += 1  # add a REQUEST token
 

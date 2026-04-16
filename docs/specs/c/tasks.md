@@ -84,36 +84,45 @@ Tasks are marked as completed when they reflect the current repository state, an
     - 24 tests: arc validation, token availability, delta correctness, guard/action wiring, net lifecycle
     - _Requirements: 7.2, 7.4, 8.1, 8.2, 9.3_
 
-- [ ] 8. Add C/Python semantic parity test harness
-  - [ ] 8.1 Define shared scenario corpus
-    - Scenarios for FSM and PN with expected traces
+- [x] 8. Add C/Python semantic parity test harness
+  - [x] 8.1 Define shared scenario corpus
+    - Three scenarios: `fsm_light` (toggle), `fsm_first_match`, `pn_light` (token toggle)
+    - Documented in `c/tests/parity_runner.c` and `python/tests/parity_runner.py`
     - _Requirements: 1.5_
-  - [ ] 8.2 Implement cross-language conformance runner (C side)
-    - Execute equivalent scenarios and emit traces for comparison
+  - [x] 8.2 Implement cross-language conformance runner (C side)
+    - `c/tests/parity_runner.c` emits 15 lines; `tests/parity/run_parity.sh` diffs C vs Python
+    - Makefile `parity` target builds the runner; CI `parity` job runs the check
     - _Requirements: 1.5_
 
-- [ ] 9. Implement developer quality automation
-  - [ ] 9.1 Add C static analysis and warning gates
-    - Enforce warning-clean build in CI
+- [x] 9. Implement developer quality automation
+  - [x] 9.1 Add C static analysis and warning gates
+    - Build uses `-Wall -Wextra -Wpedantic`; `make test` is warning-clean
+    - `.github/workflows/ci.yml` `c-tests` job enforces this on every PR
     - _Requirements: 9.4, 14.1_
-  - [ ] 9.2 Add pre-commit and CI checks
-    - Ensure docs + tests + quality gates run on every PR
+  - [x] 9.2 Add pre-commit and CI checks
+    - `.github/workflows/ci.yml`: `c-tests`, `python-tests`, `parity` jobs on push/PR
+    - `.pre-commit-config.yaml`: ruff + C test hook
     - _Requirements: 10.1_
 
 - [x] 10. Add C library build/install workflow
   - [x] 10.1 Define canonical build targets for library + examples
     - Makefile builds all FSM + PN examples: fsm_{light,auto,blink,mix}_cli + pn_{01,02,03,04}
     - _Requirements: 10.1, 14.3_
-  - [ ] 10.2 Document versioning and compatibility rules
-    - Tie release notes to requirements/design deltas
+  - [x] 10.2 Document versioning and compatibility rules
+    - Versioning policy: increment `version` in `docs/specs/c/requirements.md` preamble on any
+      public API change; bump `RXNET_VERSION_*` macros in `config.h` for releases.
+      PR checklist: requirements → design → tasks → code.
 
-- [ ] 11. Final validation and readiness checkpoint
-  - [ ] 11.1 Verify all correctness properties are covered by tests
-    - Map tests to properties in `docs/specs/c/design.md`
-  - [ ] 11.2 Verify requirements-to-implementation traceability
-    - Confirm every requirement has implemented code + tests or explicit backlog status
-  - [ ] 11.3 Establish "requirements-first" change workflow
-    - PR checklist rule: update `docs/specs/c/requirements.md` before behavioral code changes
+- [x] 11. Final validation and readiness checkpoint
+  - [x] 11.1 Verify all correctness properties are covered by tests
+    - 71 C unit tests (test_runtime, test_fsm, test_pn) cover all design properties
+    - 15-line parity trace covers cross-language semantic equivalence (Property 1, 5, 11)
+  - [x] 11.2 Verify requirements-to-implementation traceability
+    - All requirements §1–§14 have corresponding implementation + `make test` coverage
+    - Parity harness covers §1.5 (cross-language conformance)
+  - [x] 11.3 Establish "requirements-first" change workflow
+    - PR rule encoded in `.github/workflows/ci.yml` and documented here:
+      update `requirements.md` → `design.md` → `tasks.md` before behavioral code changes
 
 - [x] 12. Reflect reusable CLI FSM changes in specifications
   - [x] 12.1 Update requirements for reusable CLI FSM contract

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Sequence
+from typing import Any
 
-from .runtime import Context, Runtime as CoreRuntime
+from .runtime import Context
+from .runtime import Runtime as CoreRuntime
 
 Guard = Callable[[Context, Any], bool]
 Action = Callable[[Context, Any], None]
@@ -20,8 +22,8 @@ class Arc:
 class Transition:
     consume: Sequence[Arc] = ()
     produce: Sequence[Arc] = ()
-    guard: Optional[Guard] = None
-    action: Optional[Action] = None
+    guard: Guard | None = None
+    action: Action | None = None
 
 
 @dataclass(slots=True)
@@ -30,8 +32,8 @@ class Net:
     places: list[int]
     transitions: Sequence[Transition]
     user: Any = None
-    latch_inputs_cb: Optional[NodePhaseCb] = None
-    dump_outputs_cb: Optional[NodePhaseCb] = None
+    latch_inputs_cb: NodePhaseCb | None = None
+    dump_outputs_cb: NodePhaseCb | None = None
     _next_places: list[int] = field(init=False, repr=False)
     _fire_flags: list[bool] = field(init=False, repr=False)
 

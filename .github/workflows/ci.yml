@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # -----------------------------------------------------------------------
+  # C: warning-clean build + unit tests
+  # -----------------------------------------------------------------------
+  c-tests:
+    name: C build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build library and examples
+        working-directory: c
+        run: make all
+
+      - name: Run unit tests
+        working-directory: c
+        run: make test
+
+  # -----------------------------------------------------------------------
+  # Python: lint + type-check + unit tests
+  # -----------------------------------------------------------------------
+  python-tests:
+    name: Python lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Lint (ruff)
+        working-directory: python
+        run: uv run --extra dev ruff check rxnet/ tests/
+
+      - name: Type-check (mypy)
+        working-directory: python
+        run: uv run --extra dev mypy rxnet/ --ignore-missing-imports
+
+      - name: Run unit tests
+        working-directory: python
+        run: uv run --extra dev pytest tests/ -v
+
+  # -----------------------------------------------------------------------
+  # Parity: C and Python must produce identical traces
+  # -----------------------------------------------------------------------
+  parity:
+    name: C/Python semantic parity
+    runs-on: ubuntu-latest
+    needs: [c-tests, python-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run parity check
+        run: bash tests/parity/run_parity.sh

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Sequence
+from typing import Any
 
-from .runtime import Context, Runtime as CoreRuntime
+from .runtime import Context
+from .runtime import Runtime as CoreRuntime
 
 Guard = Callable[[Context, Any], bool]
 Action = Callable[[Context, Any], None]
@@ -14,8 +16,8 @@ NodePhaseCb = Callable[[Context, Any], None]
 class Transition:
     from_state: int
     to_state: int
-    guard: Optional[Guard] = None
-    action: Optional[Action] = None
+    guard: Guard | None = None
+    action: Action | None = None
 
 
 @dataclass(slots=True)
@@ -24,10 +26,10 @@ class Machine:
     state: int
     transitions: Sequence[Transition]
     user: Any = None
-    latch_inputs_cb: Optional[NodePhaseCb] = None
-    dump_outputs_cb: Optional[NodePhaseCb] = None
+    latch_inputs_cb: NodePhaseCb | None = None
+    dump_outputs_cb: NodePhaseCb | None = None
     _next_state: int = field(init=False, repr=False)
-    _proposed_action: Optional[Action] = field(init=False, default=None, repr=False)
+    _proposed_action: Action | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._next_state = self.state

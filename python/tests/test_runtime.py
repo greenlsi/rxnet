@@ -7,8 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
-from rxnet.runtime import Context, DeferredAction, Runtime
 
+from rxnet.runtime import Context, Runtime
 
 # ------------------------------------------------------------------ #
 # Minimal Node implementation for testing                              #
