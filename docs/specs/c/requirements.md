@@ -40,15 +40,14 @@ The goal of this document is to capture what the C library provides today, so fu
 
 ### Requirement 2: Context and Input Snapshot Handling
 
-**User Story:** As an integrator, I want separate live and latched inputs, so that guards read a stable snapshot during each tick.
+**User Story:** As an integrator, I want each node to manage its own input snapshot, so that guards read a stable per-node snapshot during each tick.
 
 #### Acceptance Criteria
 
-1. THE Context SHALL expose mutable live inputs for application/driver updates
-2. THE Context SHALL expose latched inputs used during evaluation
-3. WHEN ticking, THE runtime SHALL copy `inputs_size` bytes from `inputs` to `latched_inputs`
-4. THE runtime SHALL keep ownership of the live inputs buffer in the application (runtime does not free it)
-5. WHEN initializing context, THE provided `inputs_size` SHALL be less than or equal to the compile-time configured maximum input size
+1. THE Context SHALL NOT own any global input buffer; input ownership stays with each node's `user` payload or the host application
+2. EACH node SHALL read and latch its own inputs inside its `latch_inputs` callback (phase 1 of the tick)
+3. THE `latch_inputs` callback SHALL run before `evaluate`, guaranteeing that guards observe a stable snapshot for the duration of one tick
+4. THE runtime SHALL NOT copy or free any application-owned input memory
 
 ### Requirement 3: Deferred Action Execution
 
@@ -181,14 +180,39 @@ The goal of this document is to capture what the C library provides today, so fu
 
 ### Requirement 14: Execution Model Constraints
 
-**User Story:** As a platform engineer, I want clear operational constraints, so that I can integrate `rxnet` correctly in larger systems.
+**User Story:** As a platform engineer, I want clear operational constraints and concurrency patterns, so that I can integrate `rxnet` correctly in bare-metal, RTOS, and threaded environments.
 
 #### Acceptance Criteria
 
-1. THE runtime SHALL be single-threaded per runtime instance unless external synchronization is provided by the integrator
+1. THE runtime SHALL be single-threaded per runtime instance unless external synchronization is provided by the integrator; `rx_tick` is not re-entrant
 2. THE library SHALL not include built-in networking, persistence, or REST APIs
 3. THE library SHALL leave scheduling policy (tick frequency/loop ownership) to the host application
 4. THE library SHALL leave I/O side effects to user-defined action callbacks
 5. THE library SHALL support using one shared typed input structure across multiple model nodes in the same runtime context
 6. THE tick path (`latch`, `evaluate`, `commit`, `run deferred actions`) SHALL perform no heap allocation or reallocation
 7. THE fixed runtime capacities used by the tick path SHALL be configurable through `rxnet/config.h`
+
+### Requirement 15: Concurrency Integration Patterns
+
+**User Story:** As an embedded or server integrator, I want documented patterns for using `rxnet` with cyclic executives, RTOS tasks, and OS threads, so that I can integrate without guessing.
+
+#### Acceptance Criteria
+
+1. **Cyclic executive (bare-metal / single context):** Calling `rx_tick` in a periodic loop with inputs updated from ISRs using word-sized atomic variables SHALL be safe without additional locking. Node `latch_inputs` callbacks take the snapshot at the start of each tick.
+
+2. **OS threads (POSIX / Win32):** An integrator SHALL be able to run `rx_tick` from a dedicated tick thread and update inputs from other threads by protecting both the input write and the tick call with a single mutex:
+   ```c
+   /* writer thread / ISR: */
+   pthread_mutex_lock(&lock);
+   inputs.button = 1;
+   pthread_mutex_unlock(&lock);
+
+   /* tick thread: */
+   pthread_mutex_lock(&lock);
+   rx_fsm_tick(&runtime);
+   pthread_mutex_unlock(&lock);
+   ```
+
+3. **RTOS cooperative tasks (FreeRTOS / Zephyr):** An integrator SHALL be able to wake the tick task from an ISR or driver task using a task notification or semaphore, then call `rx_tick` inside the tick task. No additional lock is required if all input writes happen in the same task context or from ISRs using atomic word writes.
+
+4. THE library SHALL make no assumption about which execution context calls `rx_tick`; the integrator owns that decision entirely.

@@ -187,6 +187,52 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Ensure no behavioral regressions from struct field reordering
     - _Requirements: 10.1, 9.1_
 
+- [ ] 18. Eliminar código muerto y corregir brecha spec/implementación
+  - [ ] 18.1 Eliminar `RXNET_MAX_INPUT_SIZE` de config.h y specs
+    - El macro está definido pero nunca referenciado en el código
+    - Eliminar de `config.h`, requirements §2 y design §Context
+  - [ ] 18.2 Actualizar requirements §2 para reflejar el modelo real de inputs
+    - El contexto C solo tiene la cola de diferidos; los inputs son responsabilidad de cada nodo
+    - Eliminar referencias a `inputs`/`latched_inputs` en `rx_context`; documentar patrón real
+  - [ ] 18.3 Actualizar design §Context y §API signatures para coincidir con implementación
+    - Corregir firma `rx_context_init(ctx)` (no tiene parámetros de inputs)
+    - Corregir firma `rx_fsm_machine_init` (incluye latch/dump callbacks)
+    - Eliminar descripción de campos `inputs`/`latched_inputs` en `rx_context`
+
+- [x] 19. Unificar callbacks latch/dump en PN con convenio `(ctx, user)`
+  - [x] 19.1 Añadir campos `latch_inputs_fn` y `dump_outputs_fn` a `rx_pn_net`
+    - Tipo: `void (*)(rx_pn_context *ctx, void *user)`, igual que FSM
+    - La vtable interna sigue usando `(node, ctx)` pero delega a estos campos si están definidos
+  - [x] 19.2 Actualizar `rx_pn_net_init` para recibir y registrar ambas callbacks
+    - Añadir `latch_inputs_fn` y `dump_outputs_fn` como parámetros opcionales (NULL = noop)
+  - [x] 19.3 Migrar ejemplos PN a la nueva API de callbacks
+    - Eliminar el patrón de cast manual `(rx_pn_net *)node` en los ejemplos
+  - [x] 19.4 Actualizar tests y parity runner tras el cambio de API
+  - [x] 19.5 Actualizar requirements y design para documentar el nuevo convenio
+
+- [x] 20. Añadir documentación de patrones de concurrencia
+  - [x] 20.1 Añadir sección "Integration Patterns" a requirements §14
+    - Tres patrones: ejecutivo cíclico, threads con mutex, RTOS con notificación de tarea
+    - Describir qué proteger (escritura de inputs + llamada a tick)
+    - Describir cuándo no hace falta mutex (inputs word-sized atómicos en ARM Cortex-M)
+  - [x] 20.2 Añadir sección "Concurrency" a design §Host Integration Layer
+    - Código de ejemplo para cada patrón (pthread, FreeRTOS, ejecutivo cíclico)
+    - Diagrama de secuencia: writer → inputs → latch → tick → outputs
+
+- [x] 21. Añadir ejemplo de runtime mixto FSM + PN
+  - [x] 21.1 Implementar `c/examples/mixed/main_cli.c`
+    - Un runtime base `rx_runtime` con un `rx_fsm_machine` y un `rx_pn_net` registrados juntos
+    - Demuestra que ambos tipos de nodo comparten el mismo tick
+  - [x] 21.2 Añadir target `mixed` al Makefile
+  - [x] 21.3 Documentar el patrón en design §Host Integration Layer
+
+- [x] 22. Reescribir READMEs con guía real de integración
+  - [x] 22.1 Reescribir `c/README.md`
+    - Corregir targets de make obsoletos (`pn_00_queue` no existe)
+    - Añadir: qué es rxnet, cuándo usar FSM vs PN, patrón básico, los tres modelos de concurrencia
+  - [x] 22.2 Reescribir `README.md` raíz
+    - Añadir getting-started, tabla FSM vs PN, enlace a ejemplos y specs
+
 ## Notes
 
 - Tasks marked with `*` are optional for early MVP but recommended for robustness.

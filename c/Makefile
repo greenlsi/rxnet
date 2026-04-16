@@ -14,6 +14,7 @@ PN_01_LIGHT_BIN  := $(BUILD_DIR)/pn_01_light
 PN_02_AUTO_BIN   := $(BUILD_DIR)/pn_02_auto
 PN_03_BLINK_BIN  := $(BUILD_DIR)/pn_03_blink
 PN_04_MIX_BIN    := $(BUILD_DIR)/pn_04_mix
+MIXED_BIN        := $(BUILD_DIR)/mixed
 
 # Shared sources reused by all PN CLI examples
 PN_CLI_SHARED := examples/fsm/00-light/app_driver.c examples/fsm/00-light/cli_fsm.c
@@ -56,7 +57,8 @@ $(BUILD_DIR):
 # ------------------------------------------------------------------ #
 
 examples: light_cli auto_cli blink_cli mix_cli \
-          pn_01_light pn_02_auto pn_03_blink pn_04_mix
+          pn_01_light pn_02_auto pn_03_blink pn_04_mix \
+          mixed
 
 light_cli: $(FSM_00_LIGHT_BIN)
 
@@ -110,6 +112,17 @@ $(PN_04_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
 	    -Iexamples/pn/01-light \
 	    -Iexamples/pn/02-auto \
 	    -Iexamples/pn/03-blink \
+	    $^ -o $@
+
+mixed: $(MIXED_BIN)
+
+$(MIXED_BIN): $(LIB) $(PN_CLI_SHARED) \
+    examples/fsm/00-light/light_fsm.c \
+    examples/pn/01-light/light_pn.c \
+    examples/mixed/main_cli.c | $(BUILD_DIR)
+	$(CC) $(PN_CLI_FLAGS) \
+	    -Iexamples/fsm/00-light \
+	    -Iexamples/pn/01-light \
 	    $^ -o $@
 
 # ------------------------------------------------------------------ #

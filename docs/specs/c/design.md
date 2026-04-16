@@ -86,23 +86,21 @@ void rx_runtime_free(rx_runtime *rt);
 ### Context
 
 **Responsibilities:**
-- Hold mutable application inputs (`inputs`)
-- Hold immutable per-tick snapshot (`latched_inputs`)
-- Queue and execute deferred actions
+- Queue and execute deferred actions after all commits
+- Serve as the shared argument passed to every node phase callback
 
 **Design Notes:**
-- Latching is byte-copy (`memcpy`) using explicit `inputs_size`
-- Live input ownership remains external; runtime does not free it
-- Context uses fixed-size arrays configured in `rxnet/config.h` for latched inputs and deferred actions
-- Deferred-action queue capacity is fixed at initialization from configured maxima; enqueue returns error on overflow (no `malloc`/`realloc` during tick)
+- The context holds **no global input buffer**. Each node manages its own inputs (typically inside its `user` payload). The `latch_inputs` callback (phase 1 of the tick) is where each node takes its own stable snapshot before evaluation.
+- Deferred-action queue uses a fixed-size array configured in `rxnet/config.h`; enqueue returns `-1` on overflow with no `malloc`/`realloc`
 
 **Key Interfaces:**
 ```c
-int rx_context_init(rx_context *ctx, void *inputs, size_t inputs_size);
-void rx_context_latch_inputs(rx_context *ctx);
-int rx_context_enqueue_deferred_action(rx_context *ctx, rx_deferred_action_fn fn, void *user);
-void rx_context_run_deferred_actions(rx_context *ctx);
+int  rx_context_init(rx_context *ctx);
+rx_context *rx_context_create(void);
 void rx_context_free(rx_context *ctx);
+void rx_context_destroy(rx_context *ctx);
+int  rx_context_enqueue_deferred_action(rx_context *ctx, rx_deferred_action_fn fn, void *user);
+void rx_context_run_deferred_actions(rx_context *ctx);
 ```
 
 ### FSM Frontend
@@ -134,7 +132,9 @@ void rx_fsm_machine_init(
     int initial_state,
     const rx_fsm_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_fsm_node_phase_fn latch_inputs,   /* void (*)(rx_fsm_context*, void* user) */
+    rx_fsm_node_phase_fn dump_outputs    /* void (*)(rx_fsm_context*, void* user) */
 );
 int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine);
 int rx_fsm_tick(rx_fsm_runtime *runtime);
@@ -184,7 +184,9 @@ int rx_pn_net_init(
     size_t place_count,
     const rx_pn_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_pn_node_phase_fn latch_inputs,   /* void (*)(rx_pn_context*, void* user); NULL → noop */
+    rx_pn_node_phase_fn dump_outputs    /* void (*)(rx_pn_context*, void* user); NULL → noop */
 );
 int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net);
 int rx_pn_tick(rx_pn_runtime *runtime);
@@ -196,14 +198,89 @@ void rx_pn_net_destroy(rx_pn_net *net);
 ### Host Integration Layer
 
 **Responsibilities:**
-- Own and mutate live inputs before each tick
+- Own and mutate live inputs before each tick (via node `user` payloads)
 - Invoke tick in a periodic or event-driven loop
 - Reset edge-triggered inputs when required by domain logic
 - Implement side effects in action callbacks
 
-**Supported Patterns:**
-- Host CLI loop for manual event injection and status inspection
-- Embedded periodic loop (ESP-IDF `vTaskDelayUntil`) with ISR-updated inputs
+**Concurrency patterns — all supported without library changes:**
+
+| Pattern | Who calls `rx_tick` | Input writes | Synchronization needed |
+|---|---|---|---|
+| Cyclic executive | Single loop / main task | ISR (word-sized atomic) | None — latch takes snapshot at tick start |
+| OS threads | Dedicated tick thread | Other threads | Mutex around input write AND tick call |
+| RTOS cooperative | Tick task (woken by notification) | ISR or driver task (atomic) | None for atomic writes; semaphore to wake tick task |
+
+**Cyclic executive (bare-metal):**
+```c
+/* ISR: word-sized write is atomic on ARM Cortex-M */
+void BUTTON_IRQHandler(void) { inputs.button = 1; }
+
+/* Main loop: */
+while (1) {
+    rx_fsm_tick(&runtime);
+    /* dump outputs, sleep to next period */
+}
+```
+
+**Threads (POSIX):**
+```c
+/* Writer thread: */
+pthread_mutex_lock(&lock);
+inputs.button = 1;
+pthread_mutex_unlock(&lock);
+
+/* Tick thread: */
+while (1) {
+    pthread_mutex_lock(&lock);
+    rx_fsm_tick(&runtime);
+    pthread_mutex_unlock(&lock);
+    nanosleep(&period, NULL);
+}
+```
+
+**RTOS cooperative (FreeRTOS):**
+```c
+/* ISR or driver task: */
+void button_isr(void) {
+    inputs.button = 1;                  /* atomic word write */
+    xTaskNotifyGive(tick_task_handle);  /* wake tick task */
+}
+
+/* Tick task: */
+void tick_task(void *arg) {
+    while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        rx_fsm_tick(&runtime);
+    }
+}
+```
+
+**Mixing FSM and PN in a single base runtime:**
+
+`rx_fsm_machine` and `rx_pn_net` both embed `rx_node` as their first member.  Any number of them can be registered with one `rx_runtime` and advanced by a single `rx_tick` call:
+
+```c
+rx_context     ctx;
+rx_runtime     rt;
+rx_fsm_machine light_a;   /* FSM node */
+rx_pn_net      light_b;   /* PN node  */
+
+rx_context_init(&ctx);
+rx_runtime_init(&rt, &ctx, 2);
+
+light_fsm_create(&light_a, BUTTON_A, LIGHT_A);
+light_pn_init(&light_b, BUTTON_B, LIGHT_B);
+
+rx_runtime_add_node(&rt, &light_a.node);
+rx_runtime_add_node(&rt, &light_b.node);
+
+while (1) {
+    rx_tick(&rt);          /* advances both light_a (FSM) and light_b (PN) */
+}
+```
+
+See `examples/mixed/main_cli.c` for a full working example.
 
 ### Reusable CLI FSM Utility (Example Layer)
 

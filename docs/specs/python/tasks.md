@@ -111,6 +111,12 @@ Tasks are marked as completed when they reflect the current repository state, an
     - PR rule in `.github/workflows/ci.yml` and documented here:
       update `requirements.md` → `design.md` → `tasks.md` before behavioral code changes
 
+- [x] 11. Reescribir README con guía real de integración
+  - [x] 11.1 Reescribir `python/README.md`
+    - Añadir explicación del modelo, cuándo usar FSM vs PN, patrón básico de integración
+    - Añadir sección de concurrencia: GIL, threading.Thread, asyncio (tick en corutina), ejecutivo cíclico
+  - [x] 11.2 Actualizar `README.md` raíz para incluir sección Python con getting-started
+
 ## Notes
 
 - Tasks marked with `*` are optional for early MVP but recommended for robustness.

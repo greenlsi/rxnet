@@ -74,9 +74,8 @@ static auto_pn_data *find_or_alloc(rx_pn_net *net) {
     return NULL;
 }
 
-static void auto_pn_latch_inputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    auto_pn_data *data = (auto_pn_data *)net->user;
+static void auto_pn_latch_inputs(rx_pn_context *ctx, void *user) {
+    auto_pn_data *data = (auto_pn_data *)user;
 
     (void)ctx;
     if (data == NULL) {
@@ -86,27 +85,26 @@ static void auto_pn_latch_inputs(rx_node *node, rx_context *ctx) {
     data->now_ms = auto_now_ms();
     data->latched_event = app_driver_latch_button_event(data->button_gpio);
     if (data->latched_event) {
-        net->places[P_REQUEST]++;
+        data->net->places[P_REQUEST]++;
     }
 
     /* AUTO_OFF_DUE is a signal place: set fresh each tick. */
-    net->places[P_AUTO_OFF_DUE] =
-        (net->places[P_ON] > 0 &&
+    data->net->places[P_AUTO_OFF_DUE] =
+        (data->net->places[P_ON] > 0 &&
          data->wait_active &&
          data->auto_off_timeout_ms > 0u &&
          data->now_ms >= data->wait_end_ms) ? 1 : 0;
 }
 
-static void auto_pn_dump_outputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    auto_pn_data *data = (auto_pn_data *)net->user;
+static void auto_pn_dump_outputs(rx_pn_context *ctx, void *user) {
+    auto_pn_data *data = (auto_pn_data *)user;
 
     (void)ctx;
     if (data == NULL) {
         return;
     }
 
-    app_driver_set_light(data->light_gpio, net->places[P_ON] > 0);
+    app_driver_set_light(data->light_gpio, data->net->places[P_ON] > 0);
     if (data->latched_event) {
         app_driver_clear_button_event(data->button_gpio);
     }
@@ -178,13 +176,12 @@ int auto_pn_init(
     data->wait_active = 0;
 
     if (rx_pn_net_init(net, "auto", initial_places, AUTO_PLACE_COUNT,
-                       transitions, AUTO_TRANSITION_COUNT, data) != 0) {
+                       transitions, AUTO_TRANSITION_COUNT, data,
+                       auto_pn_latch_inputs, auto_pn_dump_outputs) != 0) {
         data->in_use = 0;
         return -1;
     }
 
-    rx_node_set_latch_inputs_callback(&net->node, auto_pn_latch_inputs);
-    rx_node_set_dump_outputs_callback(&net->node, auto_pn_dump_outputs);
     return 0;
 }
 

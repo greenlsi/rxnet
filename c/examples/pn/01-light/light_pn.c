@@ -45,9 +45,8 @@ static light_pn_data *find_or_alloc(rx_pn_net *net) {
     return NULL;
 }
 
-static void light_pn_latch_inputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    light_pn_data *data = (light_pn_data *)net->user;
+static void light_pn_latch_inputs(rx_pn_context *ctx, void *user) {
+    light_pn_data *data = (light_pn_data *)user;
 
     (void)ctx;
     if (data == NULL) {
@@ -56,20 +55,19 @@ static void light_pn_latch_inputs(rx_node *node, rx_context *ctx) {
 
     data->latched_event = app_driver_latch_button_event(data->button_gpio);
     if (data->latched_event) {
-        net->places[P_REQUEST]++;
+        data->net->places[P_REQUEST]++;
     }
 }
 
-static void light_pn_dump_outputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    light_pn_data *data = (light_pn_data *)net->user;
+static void light_pn_dump_outputs(rx_pn_context *ctx, void *user) {
+    light_pn_data *data = (light_pn_data *)user;
 
     (void)ctx;
     if (data == NULL) {
         return;
     }
 
-    app_driver_set_light(data->light_gpio, net->places[P_ON] > 0);
+    app_driver_set_light(data->light_gpio, data->net->places[P_ON] > 0);
     if (data->latched_event) {
         app_driver_clear_button_event(data->button_gpio);
     }
@@ -114,12 +112,11 @@ int light_pn_init(
     data->latched_event = 0;
 
     if (rx_pn_net_init(net, "light", initial_places, LIGHT_PLACE_COUNT,
-                       transitions, LIGHT_TRANSITION_COUNT, data) != 0) {
+                       transitions, LIGHT_TRANSITION_COUNT, data,
+                       light_pn_latch_inputs, light_pn_dump_outputs) != 0) {
         data->in_use = 0;
         return -1;
     }
 
-    rx_node_set_latch_inputs_callback(&net->node, light_pn_latch_inputs);
-    rx_node_set_dump_outputs_callback(&net->node, light_pn_dump_outputs);
     return 0;
 }

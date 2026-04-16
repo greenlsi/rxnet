@@ -1,25 +1,71 @@
 # rxnet (Python)
 
-`rxnet` is a small synchronous runtime for reactive models.
+`rxnet` is a small synchronous runtime for reactive models.  
+It supports two model families — **FSM** and **Petri Net** — that share one phase-based execution engine.
 
-The Python package has a shared internal runtime with a 5-phase tick:
+## Tick phases (per cycle)
 
-1. **Global latch** — snapshot shared inputs (`context.latched_inputs = copy.copy(context.inputs)`)
-2. **Per-node latch** — each node's `latch_inputs_cb` runs (read GPIO, set signal places, etc.)
-3. **Evaluate** — all nodes compute their next state / fire flags
-4. **Commit** — all nodes apply their updates; deferred actions are enqueued
-5. **Deferred actions** — post-commit callbacks run (timer start, output side-effects)
-6. **Dump outputs** — each node's `dump_outputs_cb` runs (write GPIO, print state, etc.)
+1. **Latch inputs** — each node's `latch_inputs_cb` runs; nodes snapshot their own inputs
+2. **Evaluate** — all nodes compute next state / fire transitions against the snapshot
+3. **Commit** — all nodes apply their updates; deferred actions are enqueued
+4. **Run deferred actions** — post-commit callbacks fire (timers, side-effects)
+5. **Dump outputs** — each node's `dump_outputs_cb` runs (write outputs, clear flags)
 
-Model frontends:
+All nodes observe a consistent snapshot.  Guards in phase 2 never see a half-committed peer.
 
-- FSM: `rxnet.fsm` — `Machine` + `Transition`, first-match semantics
-- Petri Net: `rxnet.pn` — `Net` + `Transition` + `Arc`, greedy-sequential semantics
+Input ownership stays with each node's own data, passed via the `user` argument to callbacks.
 
-Both use the shared context:
+## When to use FSM vs Petri Net
 
-- `context.inputs`: mutable live inputs (written by app/drivers)
-- `context.latched_inputs`: snapshot used during guard evaluation
+| | FSM | Petri Net |
+|---|---|---|
+| **Model** | One active state at a time | Token counts across places |
+| **Transition** | `from_state → to_state` guarded by callable | `consume arcs → produce arcs` |
+| **Best for** | Linear mode sequences, UI flows | Concurrency, resource sharing, event counting |
+| **Example use** | Button toggles ON↔OFF | Blink with speed levels (OFF/X1/X2) |
+
+Both `Machine` (FSM) and `Net` (PN) are `Node` subtypes and can share a single `Runtime`.
+
+## Install
+
+```bash
+# From the python/ directory:
+uv sync --extra dev
+```
+
+Requires Python 3.11+.
+
+## Basic integration pattern (FSM)
+
+```python
+from rxnet.fsm import Machine, Transition, Runtime
+
+OFF, ON = 0, 1
+button = {"pressed": False}
+
+def guard(ctx, user):
+    return user["pressed"]
+
+transitions = [
+    Transition(from_state=OFF, to_state=ON,  guard=guard),
+    Transition(from_state=ON,  to_state=OFF, guard=guard),
+]
+
+machine = Machine(
+    name="light",
+    initial_state=OFF,
+    transitions=transitions,
+    user=button,
+    latch_inputs=lambda ctx, user: None,   # fill user["pressed"] here
+    dump_outputs=lambda ctx, user: None,   # read machine.state here
+)
+
+runtime = Runtime(capacity=1)
+runtime.add(machine)
+
+while True:
+    runtime.tick()
+```
 
 ## Tests
 
@@ -28,15 +74,14 @@ cd python
 uv run --extra dev pytest tests/ -v
 ```
 
-All 56 tests should pass (runtime, FSM, PN — unit + semantic + callback).
+56 tests covering runtime, FSM, and PN semantics.
 
 ## Examples
 
-Interactive CLI examples mirror the C examples under `c/examples/`.  They
-share two helpers in `examples/`:
+Interactive CLI examples mirror the C examples under `c/examples/`.  They share:
 
-- `app_driver.py` — simulated GPIO driver (host mock)
-- `cli.py` — non-blocking CLI helper using a background stdin thread
+- `examples/app_driver.py` — simulated GPIO driver (host mock)
+- `examples/cli.py` — non-blocking CLI helper using a background stdin thread
 
 ### FSM examples
 
@@ -63,33 +108,79 @@ share two helpers in `examples/`:
 ```bash
 cd python
 uv run examples/fsm/01-light/main.py
-uv run examples/fsm/02-auto/main.py
-uv run examples/fsm/03-blink/main.py
-uv run examples/fsm/04-mix/main.py
-
 uv run examples/pn/01-light/main.py
-uv run examples/pn/02-auto/main.py
-uv run examples/pn/03-blink/main.py
-uv run examples/pn/04-mix/main.py
+# etc.
 ```
 
-Common commands in all interactive examples:
+Common commands: `a`, `b`, `status`, `help`, `quit`
 
-```
-a           trigger button A
-press a     same as 'a'
-b           trigger button B
-press b     same as 'b'
-status      print current state
-help        list available commands
-quit/exit   exit
+## Concurrency
+
+Python's GIL means only one thread executes Python bytecode at a time.  rxnet makes no threading assumptions — choose the pattern that fits your host.
+
+### Cyclic executive (single thread)
+
+The simplest pattern: drive all ticks from one loop.
+
+```python
+import time
+
+while True:
+    inputs["button"] = read_button()
+    runtime.tick()
+    time.sleep(0.01)
 ```
 
-Additional commands depending on example:
+### Threading (`threading.Thread`)
 
+Protect both the input write and the tick with a single lock.
+
+```python
+import threading, time
+
+lock = threading.Lock()
+inputs = {"button": False}
+
+def tick_thread():
+    while True:
+        with lock:
+            runtime.tick()
+        time.sleep(0.01)
+
+def writer_thread():
+    while True:
+        with lock:
+            inputs["button"] = read_button()
+        time.sleep(0.001)
+
+threading.Thread(target=tick_thread, daemon=True).start()
+threading.Thread(target=writer_thread, daemon=True).start()
 ```
-timeout <a|b|c> <ms>   set auto-off timeout (02-auto, 04-mix)
-freq <a|b|c> <hz>      set blink base frequency (03-blink)
-freq <hz>              set blink base frequency (04-mix)
-timeout <ms>           set auto-off timeout (04-mix)
+
+### Asyncio (tick as a coroutine)
+
+Run `tick()` inside an asyncio task; update inputs from other coroutines — the event loop serialises them.
+
+```python
+import asyncio
+
+async def tick_loop():
+    while True:
+        runtime.tick()
+        await asyncio.sleep(0.01)
+
+async def button_task():
+    while True:
+        await wait_for_button()
+        inputs["button"] = True  # picked up on next tick_loop iteration
+
+async def main():
+    await asyncio.gather(tick_loop(), button_task())
+
+asyncio.run(main())
 ```
+
+## Specs
+
+- [`docs/specs/python/requirements.md`](../docs/specs/python/requirements.md)
+- [`docs/specs/python/design.md`](../docs/specs/python/design.md)

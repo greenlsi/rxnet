@@ -85,9 +85,8 @@ static blink_pn_data *find_or_alloc(rx_pn_net *net) {
     return NULL;
 }
 
-static void blink_pn_latch_inputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    blink_pn_data *data = (blink_pn_data *)net->user;
+static void blink_pn_latch_inputs(rx_pn_context *ctx, void *user) {
+    blink_pn_data *data = (blink_pn_data *)user;
     int is_blinking;
 
     (void)ctx;
@@ -98,20 +97,19 @@ static void blink_pn_latch_inputs(rx_node *node, rx_context *ctx) {
     data->now_ms = blink_now_ms();
     data->latched_event = app_driver_latch_button_event(data->button_gpio);
     if (data->latched_event) {
-        net->places[P_REQUEST]++;
+        data->net->places[P_REQUEST]++;
     }
 
     /* TOGGLE_DUE is a signal place: set fresh each tick. */
-    is_blinking = (net->places[P_X1] > 0 || net->places[P_X2] > 0);
-    net->places[P_TOGGLE_DUE] =
+    is_blinking = (data->net->places[P_X1] > 0 || data->net->places[P_X2] > 0);
+    data->net->places[P_TOGGLE_DUE] =
         (is_blinking &&
          data->next_toggle_ms > 0u &&
          data->now_ms >= data->next_toggle_ms) ? 1 : 0;
 }
 
-static void blink_pn_dump_outputs(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
-    blink_pn_data *data = (blink_pn_data *)net->user;
+static void blink_pn_dump_outputs(rx_pn_context *ctx, void *user) {
+    blink_pn_data *data = (blink_pn_data *)user;
 
     (void)ctx;
     if (data == NULL) {
@@ -243,13 +241,12 @@ int blink_pn_init(
     data->next_toggle_ms = 0;
 
     if (rx_pn_net_init(net, "blink", initial_places, BLINK_PLACE_COUNT,
-                       transitions, BLINK_TRANSITION_COUNT, data) != 0) {
+                       transitions, BLINK_TRANSITION_COUNT, data,
+                       blink_pn_latch_inputs, blink_pn_dump_outputs) != 0) {
         data->in_use = 0;
         return -1;
     }
 
-    rx_node_set_latch_inputs_callback(&net->node, blink_pn_latch_inputs);
-    rx_node_set_dump_outputs_callback(&net->node, blink_pn_dump_outputs);
     return 0;
 }
 

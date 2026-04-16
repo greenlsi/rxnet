@@ -115,8 +115,8 @@ enum {
     PN_LIGHT_P_REQUEST = 2,
 };
 
-static void pn_light_latch_cb(rx_node *node, rx_context *ctx) {
-    rx_pn_net *net = (rx_pn_net *)node;
+static void pn_light_latch_cb(rx_pn_context *ctx, void *user) {
+    rx_pn_net *net = (rx_pn_net *)user;
     (void)ctx;
     if (g_button) {
         net->places[PN_LIGHT_P_REQUEST]++;
@@ -145,8 +145,8 @@ static void run_pn_light(void) {
     int i;
 
     rx_pn_runtime_init(&rt, 1);
-    rx_pn_net_init(&net, "light", initial, 3, transitions, 2, NULL);
-    rx_node_set_latch_inputs_callback(&net.node, pn_light_latch_cb);
+    rx_pn_net_init(&net, "light", initial, 3, transitions, 2, &net,
+                   pn_light_latch_cb, NULL);
     rx_pn_runtime_add_net(&rt, &net);
 
     for (i = 0; i < N; i++) {

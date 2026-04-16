@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void rx_pn_noop_node_phase(rx_node *node, rx_context *ctx) {
-    (void)node;
+static void rx_pn_noop(rx_pn_context *ctx, void *user) {
     (void)ctx;
+    (void)user;
 }
 
 static int rx_pn_validate_arc_list(const rx_pn_net *net, const rx_pn_arc *arcs, size_t arc_count) {
@@ -65,9 +65,8 @@ static void rx_pn_apply_transition_delta(rx_pn_net *net, const rx_pn_transition 
 }
 
 static void rx_pn_net_latch_inputs(rx_node *node, rx_context *ctx) {
-    if (node->latch_inputs_cb != NULL) {
-        node->latch_inputs_cb(node, ctx);
-    }
+    rx_pn_net *net = (rx_pn_net *)node;
+    net->latch_inputs(ctx, net->user);
 }
 
 static void rx_pn_net_evaluate(rx_node *node, rx_context *ctx) {
@@ -116,9 +115,8 @@ static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
 }
 
 static void rx_pn_net_dump_outputs(rx_node *node, rx_context *ctx) {
-    if (node->dump_outputs_cb != NULL) {
-        node->dump_outputs_cb(node, ctx);
-    }
+    rx_pn_net *net = (rx_pn_net *)node;
+    net->dump_outputs(ctx, net->user);
 }
 
 static const rx_node_vtable RX_PN_NET_VTABLE = {
@@ -190,7 +188,9 @@ int rx_pn_net_init(
     size_t place_count,
     const rx_pn_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_pn_node_phase_fn latch_inputs,
+    rx_pn_node_phase_fn dump_outputs
 ) {
     size_t t;
 
@@ -201,8 +201,10 @@ int rx_pn_net_init(
 
     net->name = name;
     net->node.vtable = &RX_PN_NET_VTABLE;
-    net->node.latch_inputs_cb = rx_pn_noop_node_phase;
-    net->node.dump_outputs_cb = rx_pn_noop_node_phase;
+    net->node.latch_inputs_cb = NULL;
+    net->node.dump_outputs_cb = NULL;
+    net->latch_inputs = latch_inputs != NULL ? latch_inputs : rx_pn_noop;
+    net->dump_outputs = dump_outputs != NULL ? dump_outputs : rx_pn_noop;
     net->place_count = place_count;
     net->transitions = transitions;
     net->transition_count = transition_count;
@@ -239,7 +241,9 @@ rx_pn_net *rx_pn_net_create(
     size_t place_count,
     const rx_pn_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_pn_node_phase_fn latch_inputs,
+    rx_pn_node_phase_fn dump_outputs
 ) {
     rx_pn_net *net = (rx_pn_net *)malloc(sizeof(*net));
 
@@ -247,7 +251,8 @@ rx_pn_net *rx_pn_net_create(
         return NULL;
     }
 
-    if (rx_pn_net_init(net, name, initial_places, place_count, transitions, transition_count, user) != 0) {
+    if (rx_pn_net_init(net, name, initial_places, place_count, transitions, transition_count,
+                       user, latch_inputs, dump_outputs) != 0) {
         free(net);
         return NULL;
     }

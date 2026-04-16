@@ -40,7 +40,7 @@ static int pn_fixture_init(
 ) {
     if (rx_pn_runtime_init(&f->rt, 1) != 0) return -1;
     if (rx_pn_net_init(&f->net, "test", initial_places, place_count,
-                       transitions, transition_count, NULL) != 0) return -1;
+                       transitions, transition_count, NULL, NULL, NULL) != 0) return -1;
     return rx_pn_runtime_add_net(&f->rt, &f->net);
 }
 
@@ -53,18 +53,18 @@ static void pn_fixture_free(pn_fixture *f) {
 /* ------------------------------------------------------------------ */
 
 static void pn_net_init_rejects_null_net(void) {
-    ASSERT_EQ(-1, rx_pn_net_init(NULL, "x", NULL, 0, NULL, 0, NULL));
+    ASSERT_EQ(-1, rx_pn_net_init(NULL, "x", NULL, 0, NULL, 0, NULL, NULL, NULL));
 }
 
 static void pn_net_init_rejects_null_places_when_count_nonzero(void) {
     rx_pn_net net;
-    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", NULL, 2, NULL, 0, NULL));
+    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", NULL, 2, NULL, 0, NULL, NULL, NULL));
 }
 
 static void pn_net_init_rejects_null_transitions_when_count_nonzero(void) {
     rx_pn_net net;
     int places[] = {1};
-    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, NULL, 1, NULL));
+    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, NULL, 1, NULL, NULL, NULL));
 }
 
 static void pn_net_init_rejects_out_of_range_place_id(void) {
@@ -75,7 +75,7 @@ static void pn_net_init_rejects_out_of_range_place_id(void) {
         .consume = consume, .consume_count = 1,
         .produce = NULL,    .produce_count = 0,
     }};
-    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, trans, 1, NULL));
+    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, trans, 1, NULL, NULL, NULL));
 }
 
 static void pn_net_init_rejects_negative_arc_weight(void) {
@@ -86,7 +86,7 @@ static void pn_net_init_rejects_negative_arc_weight(void) {
         .consume = consume, .consume_count = 1,
         .produce = NULL,    .produce_count = 0,
     }};
-    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, trans, 1, NULL));
+    ASSERT_EQ(-1, rx_pn_net_init(&net, "x", places, 1, trans, 1, NULL, NULL, NULL));
 }
 
 static void pn_net_free_null_is_safe(void) {
@@ -96,7 +96,7 @@ static void pn_net_free_null_is_safe(void) {
 static void pn_net_free_sets_pointers_to_null(void) {
     rx_pn_net net;
     int places[] = {1, 2};
-    rx_pn_net_init(&net, "x", places, 2, NULL, 0, NULL);
+    rx_pn_net_init(&net, "x", places, 2, NULL, 0, NULL, NULL, NULL);
     rx_pn_net_free(&net);
     ASSERT_NULL(net.places);
     ASSERT_NULL(net.next_places);
@@ -118,7 +118,7 @@ static void pn_runtime_destroy_null_is_safe(void) {
 static void pn_places_initialized_from_initial_array(void) {
     int places[] = {3, 0, 7};
     rx_pn_net net;
-    rx_pn_net_init(&net, "x", places, 3, NULL, 0, NULL);
+    rx_pn_net_init(&net, "x", places, 3, NULL, 0, NULL, NULL, NULL);
     ASSERT_EQ(3, net.places[0]);
     ASSERT_EQ(0, net.places[1]);
     ASSERT_EQ(7, net.places[2]);

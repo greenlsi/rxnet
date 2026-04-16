@@ -14,8 +14,9 @@ typedef struct rx_pn_runtime rx_pn_runtime;
 typedef struct rx_pn_transition rx_pn_transition;
 typedef struct rx_pn_arc rx_pn_arc;
 
-typedef int (*rx_pn_guard_fn)(const rx_pn_context *ctx, void *user);
+typedef int  (*rx_pn_guard_fn)(const rx_pn_context *ctx, void *user);
 typedef void (*rx_pn_action_fn)(rx_pn_context *ctx, void *user);
+typedef void (*rx_pn_node_phase_fn)(rx_pn_context *ctx, void *user);
 
 struct rx_pn_arc {
     size_t place_id;
@@ -41,6 +42,8 @@ struct rx_pn_net {
     size_t transition_count;
     unsigned char *fire_flags;
     void *user;
+    rx_pn_node_phase_fn latch_inputs;   /* called as latch_inputs(ctx, user) */
+    rx_pn_node_phase_fn dump_outputs;   /* called as dump_outputs(ctx, user) */
 };
 
 struct rx_pn_runtime {
@@ -65,7 +68,9 @@ int rx_pn_net_init(
     size_t place_count,
     const rx_pn_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_pn_node_phase_fn latch_inputs,   /* NULL → noop */
+    rx_pn_node_phase_fn dump_outputs    /* NULL → noop */
 );
 rx_pn_net *rx_pn_net_create(
     const char *name,
@@ -73,7 +78,9 @@ rx_pn_net *rx_pn_net_create(
     size_t place_count,
     const rx_pn_transition *transitions,
     size_t transition_count,
-    void *user
+    void *user,
+    rx_pn_node_phase_fn latch_inputs,
+    rx_pn_node_phase_fn dump_outputs
 );
 void rx_pn_net_free(rx_pn_net *net);
 void rx_pn_net_destroy(rx_pn_net *net);
