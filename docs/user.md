@@ -52,28 +52,13 @@ los demás hasta el siguiente tick.
 
 Cada llamada a `runtime.tick()` ejecuta seis fases en orden estricto:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  TICK                                                           │
-│                                                                 │
-│  1. Global latch  ─── context.latched_inputs = copy(inputs)    │
-│                                                                 │
-│  2. Per-node latch ── para cada nodo: latch_inputs_cb()        │
-│                        (leer GPIO, calcular señales derivadas)  │
-│                                                                 │
-│  3. Evaluate ──────── para cada nodo: evaluate()               │
-│                        (decidir siguiente estado / flags)       │
-│                                                                 │
-│  4. Commit ────────── para cada nodo: commit()                 │
-│                        (aplicar decisiones, encolar acciones)  │
-│                                                                 │
-│  5. Deferred ──────── ejecutar cola de acciones                │
-│                        (timers, side-effects, notificaciones)  │
-│                                                                 │
-│  6. Dump outputs ──── para cada nodo: dump_outputs_cb()        │
-│                        (escribir GPIO, imprimir estado)         │
-└─────────────────────────────────────────────────────────────────┘
-```
+| # | Fase | Qué hace cada nodo |
+|---|---|---|
+| 1 | **Latch inputs** | `latch_inputs_cb()` — leer GPIO, calcular señales derivadas, tomar snapshot |
+| 2 | **Evaluate** | `evaluate()` — decidir siguiente estado / flags (solo lectura del snapshot) |
+| 3 | **Commit** | `commit()` — aplicar decisiones, encolar acciones diferidas |
+| 4 | **Deferred** | ejecutar cola de acciones — timers, side-effects, notificaciones |
+| 5 | **Dump outputs** | `dump_outputs_cb()` — escribir GPIO, imprimir estado |
 
 ### Por qué esa separación de fases
 
@@ -240,12 +225,10 @@ while True:
 
 La forma canónica de conectar hardware a una FSM en rxnet:
 
-```
-Hardware            latch_inputs_cb          guards/actions
-───────────         ────────────────         ──────────────
-GPIO → evento   →   data.latched = True   →  if data.latched: ...
-(vivo, volátil)     (snapshot estable)        (solo leen snapshot)
-```
+| Hardware | `latch_inputs_cb` | guards / actions |
+|---|---|---|
+| GPIO → evento | `data.latched = True` | `if data.latched: ...` |
+| (vivo, volátil) | (snapshot estable) | (solo leen snapshot) |
 
 El callback `latch_inputs_cb` es el único punto de contacto con el hardware.
 El resto de la máquina trabaja con copias estables.
@@ -275,13 +258,13 @@ se sincronizan, la PN es más clara.
 
 ### 5.2 Conceptos fundamentales
 
-```
-Lugar (place):   círculo ○   ←→   condición, estado, recurso, mensaje pendiente
-Token:           punto •     ←→   unidad de recurso, condición activa
-Transición:      rectángulo  ←→   evento, paso de proceso
-Arco de entrada: flecha →T   ←→   condición necesaria para disparar (consume)
-Arco de salida:  flecha T→   ←→   condición que produce al disparar (produce)
-```
+| Concepto | Símbolo | Significado |
+|---|---|---|
+| Lugar (place) | ○ | condición, estado, recurso, mensaje pendiente |
+| Token | • | unidad de recurso, condición activa |
+| Transición | rect. | evento, paso de proceso |
+| Arco de entrada | →T | condición necesaria para disparar (consume tokens) |
+| Arco de salida | T→ | condición que produce al disparar (produce tokens) |
 
 Una transición **está habilitada** cuando todos sus lugares de entrada tienen
 suficientes tokens (≥ peso del arco). Una transición habilitada **dispara**:
@@ -362,11 +345,9 @@ def latch_cb(ctx, _user):
 
 ### 5.6 Ejemplo completo: blink con tres velocidades
 
-```
-OFF ──[botón]──► X1 ──[botón]──► X2 ──[botón]──► OFF
-X1 ──[toggle]──► X1   (self-loop: invertir LED)
-X2 ──[toggle]──► X2   (self-loop: invertir LED a 2× velocidad)
-```
+El botón avanza cíclicamente entre modos: OFF → X1 → X2 → OFF.
+Dentro de X1 y X2 hay un self-loop de toggle que invierte el LED cada semiperíodo
+(a velocidad base en X1, al doble en X2).
 
 ```python
 P_OFF, P_X1, P_X2, P_REQUEST, P_TOGGLE_DUE = 0, 1, 2, 3, 4
@@ -411,16 +392,8 @@ Un ejecutivo cíclico es el modelo más simple de concurrencia: un único hilo
 de ejecución que repite la misma secuencia de tareas indefinidamente, con un
 período fijo.
 
-```
-t=0ms   t=10ms  t=20ms  t=30ms
-  │       │       │       │
-  ▼       ▼       ▼       ▼
-[A][B][C][A][B][C][A][B][C]...
-
-A = tarea de sensores
-B = tarea de control
-C = tarea de actuadores
-```
+Cada período (p. ej. 10 ms) ejecuta en orden fijo las tareas A (sensores),
+B (control) y C (actuadores), sin interrupciones entre ellas.
 
 #### rxnet ES un ejecutivo cíclico
 
@@ -483,12 +456,10 @@ En la multitarea cooperativa, cada tarea cede el control voluntariamente cuando
 termina su trabajo. No hay interrupciones; el scheduler solo actúa en los puntos
 de *yield*. Python `asyncio` y MicroPython son ejemplos modernos.
 
-```
-Tarea A:  ████████░░░░░░░░████████░░░░░░
-Tarea B:  ░░░░░░░░████████░░░░░░░░████████
-                  ↑        ↑
-               yield A   yield B
-```
+| | Ejecutando | Esperando | Ejecutando | Esperando |
+|---|---|---|---|---|
+| Tarea A | bloque 1 | cede (yield) | bloque 2 | cede |
+| Tarea B | — | bloque 1 | — | bloque 2 |
 
 #### rxnet como multitarea cooperativa
 
@@ -502,13 +473,9 @@ como distribución de tokens en la PN.
 
 **Ejemplo: tarea que procesa una cola de mensajes, uno por tick**
 
-```
-Modelo FSM:
-
-IDLE ──[hay_mensaje]──► PROCESANDO ──[procesado]──► IDLE
-                              │
-                              └──[error]──► ERROR_HANDLER
-```
+La máquina arranca en `IDLE`. Al detectar un mensaje transiciona a `PROCESANDO`
+(un tick = un paso). Si el proceso termina bien vuelve a `IDLE`;
+si hay error va a `ERROR_HANDLER`.
 
 ```python
 IDLE         = 0
@@ -588,12 +555,10 @@ numéricas. El scheduler **desaloja** (preempt) una tarea de baja prioridad
 cuando una de alta prioridad pasa a estar lista para ejecutar, incluso si la
 primera no ha terminado su trabajo.
 
-```
-alta prioridad:  ░░░░████░░░░████████░░░░
-baja prioridad:  ████░░░░████░░░░░░░░████
-                     ↑            ↑
-                  preempción    preempción
-```
+| | t1 | t2 | t3 | t4 |
+|---|---|---|---|---|
+| Alta prioridad | — | ejecuta | — | ejecuta |
+| Baja prioridad | ejecuta | *preemptada* | ejecuta | *preemptada* |
 
 #### ¿Puede rxnet modelar esto?
 
@@ -610,17 +575,13 @@ rxnet corre dentro de una única tarea RTOS. El RTOS gestiona las prioridades
 reales entre tareas del sistema; rxnet gestiona la lógica de la aplicación
 dentro de su tarea.
 
-```
-RTOS scheduler
-  │
-  ├── Tarea 1 (alta prioridad): IRQ de emergencia
-  ├── Tarea 2 (media prioridad): ← rxnet corre aquí
-  │     └── rt.tick() cada 10 ms
-  │           ├── sensor_machine
-  │           ├── control_machine
-  │           └── actuator_machine
-  └── Tarea 3 (baja prioridad): logging, comms
-```
+- RTOS scheduler
+  - Tarea 1 — alta prioridad: IRQ de emergencia
+  - Tarea 2 — media prioridad: **rxnet corre aquí** (`rt.tick()` cada 10 ms)
+    - `sensor_machine`
+    - `control_machine`
+    - `actuator_machine`
+  - Tarea 3 — baja prioridad: logging, comms
 
 El RTOS garantiza que la tarea rxnet se ejecuta con su prioridad. Dentro de
 esa tarea, el ejecutivo cíclico de rxnet gestiona las sub-tareas sin overhead
@@ -657,16 +618,13 @@ transitions = [
 El "desalojo" se puede modelar como una transición que devuelve el token de
 CPU al pool cuando llega una tarea de mayor prioridad:
 
-```
-Estado normal:
-  P_CPU=1, P_LOW_RUNNING=1
+**Estado normal:** `P_CPU=1`, `P_LOW_RUNNING=1`
 
-Llega alta prioridad:
-  T_PREEMPT: {P_LOW_RUNNING, P_HIGH_READY} → {P_HIGH_RUNNING, P_LOW_SUSPENDED}
+**Llega alta prioridad:**
+`T_PREEMPT`: consume `{P_LOW_RUNNING, P_HIGH_READY}`, produce `{P_HIGH_RUNNING, P_LOW_SUSPENDED}`
 
-Alta prioridad termina:
-  T_RESUME: {P_HIGH_DONE, P_LOW_SUSPENDED} → {P_LOW_RUNNING}
-```
+**Alta prioridad termina:**
+`T_RESUME`: consume `{P_HIGH_DONE, P_LOW_SUSPENDED}`, produce `{P_LOW_RUNNING}`
 
 ```python
 P_CPU           = 0   # token = CPU libre
@@ -759,11 +717,9 @@ La pregunta más frecuente: ¿qué modelo uso?
 * El control de flujo es lineal (incluso si tiene bucles y ramas).
 * Necesitas guards complejos que leen múltiples variables.
 
-```
-Semáforo: ROJO → VERDE → AMARILLO → ROJO   ← FSM claro
-Cerrojo:  DESBLOQUEADO → BLOQUEADO          ← FSM claro
-Protocolo: IDLE → SYN_SENT → ESTABLISHED   ← FSM claro
-```
+- Semáforo: ROJO → VERDE → AMARILLO → ROJO
+- Cerrojo: DESBLOQUEADO → BLOQUEADO
+- Protocolo: IDLE → SYN\_SENT → ESTABLISHED
 
 ### Usa PN cuando...
 
@@ -772,11 +728,9 @@ Protocolo: IDLE → SYN_SENT → ESTABLISHED   ← FSM claro
 * El paralelismo es natural: varias actividades ocurren al mismo tiempo.
 * Necesitas modelar producción/consumo de forma explícita.
 
-```
-Productor/consumidor: P_LLENOS + P_VACIOS   ← PN claro
-Semáforo binario: P_MUTEX (0 o 1 token)     ← PN claro
-Rendezvous: A espera a B, B espera a A      ← PN claro
-```
+- Productor/consumidor: places `P_LLENOS` + `P_VACIOS`
+- Semáforo binario: `P_MUTEX` (0 o 1 token)
+- Rendezvous: A espera a B, B espera a A
 
 ### Mezclar ambos (patrón habitual)
 
