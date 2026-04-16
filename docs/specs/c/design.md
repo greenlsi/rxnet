@@ -399,7 +399,7 @@ interface PNArcModel {
 **Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5**
 
 ### Property 2: Snapshot Consistency Within Tick
-*For any* guard evaluation during one tick, observed inputs should come from `latched_inputs` and remain stable for that tick.
+*For any* guard evaluation during one tick, observed inputs should come from each node's latched snapshot (taken in phase 1) and remain stable for that tick.
 **Validates: Requirements 2.1, 2.2, 2.3**
 
 ### Property 3: Deferred Action Isolation
@@ -438,8 +438,8 @@ interface PNArcModel {
 *For any* matched FSM transition with action, the action should be queued for deferred execution, not run inline.
 **Validates: Requirements 5.5**
 
-### Property 10: FSM Shared Input Access
-*For any* FSM machine, guards should read from shared `latched_inputs` and not mutate it.
+### Property 10: FSM Input Snapshot Access
+*For any* FSM machine, guards should read from the latched input snapshot (captured in `latch_inputs_cb`) and not mutate it.
 **Validates: Requirements 6.1, 6.2, 6.3**
 
 ### Property 11: PN Transition Enablement

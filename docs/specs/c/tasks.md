@@ -187,14 +187,14 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Ensure no behavioral regressions from struct field reordering
     - _Requirements: 10.1, 9.1_
 
-- [ ] 18. Eliminar código muerto y corregir brecha spec/implementación
-  - [ ] 18.1 Eliminar `RXNET_MAX_INPUT_SIZE` de config.h y specs
+- [x] 18. Eliminar código muerto y corregir brecha spec/implementación
+  - [x] 18.1 Eliminar `RXNET_MAX_INPUT_SIZE` de config.h y specs
     - El macro está definido pero nunca referenciado en el código
     - Eliminar de `config.h`, requirements §2 y design §Context
-  - [ ] 18.2 Actualizar requirements §2 para reflejar el modelo real de inputs
+  - [x] 18.2 Actualizar requirements §2 para reflejar el modelo real de inputs
     - El contexto C solo tiene la cola de diferidos; los inputs son responsabilidad de cada nodo
     - Eliminar referencias a `inputs`/`latched_inputs` en `rx_context`; documentar patrón real
-  - [ ] 18.3 Actualizar design §Context y §API signatures para coincidir con implementación
+  - [x] 18.3 Actualizar design §Context y §API signatures para coincidir con implementación
     - Corregir firma `rx_context_init(ctx)` (no tiene parámetros de inputs)
     - Corregir firma `rx_fsm_machine_init` (incluye latch/dump callbacks)
     - Eliminar descripción de campos `inputs`/`latched_inputs` en `rx_context`

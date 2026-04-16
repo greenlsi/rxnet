@@ -89,7 +89,8 @@ static void latch(rx_fsm_context *ctx, void *user) {
     (void)ctx;
     *(int *)user = read_gpio(BUTTON_PIN);
 }
-static void guard(const rx_fsm_context *ctx, void *user) {
+static int guard(const rx_fsm_context *ctx, void *user) {
+    (void)ctx;
     return *(int *)user;
 }
 
