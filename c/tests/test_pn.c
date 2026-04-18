@@ -41,7 +41,7 @@ static int pn_fixture_init(
     if (rx_pn_runtime_init(&f->rt, 1) != 0) return -1;
     if (rx_pn_net_init(&f->net, "test", initial_places, place_count,
                        transitions, transition_count, NULL, NULL, NULL) != 0) return -1;
-    return rx_pn_runtime_add_net(&f->rt, &f->net);
+    return rx_pn_runtime_add_net(&f->rt, &f->net, 0, 0);
 }
 
 static void pn_fixture_free(pn_fixture *f) {

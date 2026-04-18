@@ -1,29 +1,42 @@
 /*
- * FSM 03-mix — cyclic executive with per-machine periods.
+ * FSM 03-mix — parallel thread-per-node scheduler (BSP barriers).
  *
- * Each machine carries its own period; the runtime builds the
- * hyperperiod dispatch table automatically:
+ * One runtime holds all four nodes, each with its own period.
+ * rx_par_exec gives each node its own pthread; two barriers per
+ * hyperperiod slot synchronise the reactive-synchronous phases:
  *
- *   light_a  10 ms   (button A → light A)
- *   blink_b  10 ms   (button A → blink B)
- *   auto_c   20 ms   (button B → auto-off light C)
- *   cli      10 ms   (stdin command loop)
+ *   latch_b[s]:  all active nodes latch inputs in parallel, then evaluate.
+ *   commit_b[s]: all active nodes commit outputs in parallel.
  *
- *   base  = GCD(10, 10, 20, 10) = 10 ms
- *   hyper = LCM                 = 20 ms  →  2 slots
- *   slot 0: light_a, blink_b, cli, auto_c  (EDF order)
- *   slot 1: light_a, blink_b, cli
+ *   light_a  10 ms  → thread
+ *   blink_b  10 ms  → thread
+ *   auto_c   20 ms  → thread
+ *   cli      10 ms  → main thread (added last)
+ *
+ *   runtime base = GCD(10,10,20,10) = 10 ms → 2 slots
+ *   slot 0 (t=0,20,40,...): light_a + blink_b + auto_c + cli  barrier(4)
+ *   slot 1 (t=10,30,50,...): light_a + blink_b + cli           barrier(3)
+ *
+ * Contrast with main_cli.c (cyclic executive):
+ *   - Cyclic exec: one thread, sequential nodes per slot.
+ *   - par_exec: one thread per node; latch, evaluate, and commit run in
+ *     parallel across co-active nodes, synchronised by barriers.
+ *
+ * Contrast with main_coop.c:
+ *   - Coop exec: one thread, dynamic deadline scheduling.
+ *   - par_exec: true parallelism (multiple CPUs); each node has its own
+ *     rx_context (no shared deferred queue).
  *
  * Build:
- *   make -C c fsm_03_mix
- *   ./c/build/fsm_03_mix
+ *   make -C c mix_threads
+ *   ./c/build/fsm_03_mix_threads
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "rxnet/cyclic.h"
 #include "rxnet/fsm.h"
+#include "rxnet/thread.h"
 
 #include "app_driver.h"
 #include "auto_fsm.h"
@@ -36,9 +49,9 @@
 #define LIGHT_C_GPIO         5
 #define BUTTON_A_GPIO        0
 #define BUTTON_B_GPIO        15
-#define FAST_PERIOD_US       10000L
-#define SLOW_PERIOD_US       20000L
-#define CLI_PERIOD_US        10000L
+#define FAST_PERIOD_US       10000L   /* 10 ms */
+#define SLOW_PERIOD_US       20000L   /* 20 ms */
+#define CLI_PERIOD_US        10000L   /* 10 ms */
 #define DEFAULT_FREQ_B_HZ    2u
 #define DEFAULT_TIMEOUT_C_MS 9000u
 
@@ -49,7 +62,7 @@ typedef struct {
 } mix_app_data;
 
 /* ------------------------------------------------------------------ */
-/* CLI commands                                                        */
+/* CLI commands                                                         */
 /* ------------------------------------------------------------------ */
 
 static const char *light_state_name(int state) {
@@ -160,7 +173,7 @@ cmd_quit(rx_fsm_context *ctx, cli_machine_data *cli,
 }
 
 /* ------------------------------------------------------------------ */
-/* Main                                                                */
+/* Main                                                                 */
 /* ------------------------------------------------------------------ */
 
 int
@@ -170,7 +183,7 @@ main(void)
     rx_fsm_runtime runtime;
     mix_app_data app = {&light_a_machine, &blink_b_machine, &auto_c_machine};
     cli_machine_data cli_data;
-    rx_cyclic_exec ce;
+    rx_thread_exec te;
 
     if (rx_fsm_runtime_init(&runtime, 4) != 0) {
         fprintf(stderr, "runtime_init failed\n");
@@ -181,14 +194,6 @@ main(void)
     blink_fsm_create(&blink_b_machine, BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ);
     auto_fsm_create(&auto_c_machine,   BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS);
 
-    /*
-     * Each machine carries its own period and deadline.
-     * The runtime builds the hyperperiod table from these:
-     *   base  = GCD(10, 10, 20, 10) = 10 ms
-     *   hyper = LCM              = 20 ms  → 2 slots
-     *   slot 0: light_a, blink_b, cli, auto_c
-     *   slot 1: light_a, blink_b, cli
-     */
     if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine, FAST_PERIOD_US, 0) != 0 ||
         rx_fsm_runtime_add_machine(&runtime, &blink_b_machine, FAST_PERIOD_US, 0) != 0 ||
         rx_fsm_runtime_add_machine(&runtime, &auto_c_machine,  SLOW_PERIOD_US, 0) != 0) {
@@ -212,6 +217,7 @@ main(void)
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
+    /* cli added last → runs in main thread */
     if (rx_fsm_runtime_add_machine(&runtime, &cli_machine, CLI_PERIOD_US, 0) != 0) {
         fprintf(stderr, "add_machine cli failed\n");
         return 1;
@@ -221,9 +227,9 @@ main(void)
     cmd_status(&runtime.context, &cli_data, "status", &app);
     cli_fsm_print_prompt(&cli_data);
 
-    rx_cyclic_exec_init(&ce);
-    rx_cyclic_exec_add(&ce, &runtime.runtime); /* reads period from runtime after build */
-    rx_cyclic_exec_run(&ce); /* never returns */
+    rx_thread_exec_init(&te);
+    rx_thread_exec_add(&te, &runtime.runtime);
+    rx_thread_exec_run(&te); /* never returns */
 
     return 0;
 }

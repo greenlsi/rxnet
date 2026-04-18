@@ -126,6 +126,12 @@ static const rx_node_vtable RX_PN_NET_VTABLE = {
     .dump_outputs = rx_pn_net_dump_outputs,
 };
 
+static int
+rx_pn_runtime_tick_fn(rx_runtime *base)
+{
+    return rx_pn_tick((rx_pn_runtime *)base);
+}
+
 int rx_pn_runtime_init(
     rx_pn_runtime *runtime,
     size_t net_capacity
@@ -143,6 +149,7 @@ int rx_pn_runtime_init(
         return -1;
     }
 
+    runtime->runtime.tick = rx_pn_runtime_tick_fn;
     return 0;
 }
 
@@ -288,13 +295,14 @@ void rx_pn_net_destroy(rx_pn_net *net) {
     free(net);
 }
 
-int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net) {
+int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net,
+                          long period_us, long deadline_us) {
     if (runtime == NULL || net == NULL) {
         return -1;
     }
 
     net->node.vtable = &RX_PN_NET_VTABLE;
-    return rx_runtime_add_node(&runtime->runtime, &net->node);
+    return rx_runtime_add_node(&runtime->runtime, &net->node, period_us, deadline_us);
 }
 
 int rx_pn_tick(rx_pn_runtime *runtime) {

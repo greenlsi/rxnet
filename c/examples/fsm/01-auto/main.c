@@ -37,9 +37,9 @@ void app_main(void) {
     auto_fsm_create(&auto_b_machine, BUTTON_A_GPIO, LIGHT_B_GPIO, AUTO_OFF_B_MS);
     auto_fsm_create(&auto_c_machine, BUTTON_B_GPIO, LIGHT_C_GPIO, AUTO_OFF_C_MS);
 
-    if (rx_fsm_runtime_add_machine(&runtime, &auto_a_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &auto_b_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &auto_c_machine) != 0) {
+    if (rx_fsm_runtime_add_machine(&runtime, &auto_a_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &auto_b_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &auto_c_machine, 0, 0) != 0) {
         ESP_LOGE(TAG, "rx_fsm_runtime_add_machine failed");
         rx_fsm_runtime_free(&runtime);
         return;

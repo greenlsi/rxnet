@@ -236,7 +236,7 @@ static void runtime_init_at_max_capacity_succeeds(void) {
 static void runtime_add_node_rejects_null_rt(void) {
     test_node tn;
     test_node_init(&tn);
-    ASSERT_EQ(-1, rx_runtime_add_node(NULL, &tn.node));
+    ASSERT_EQ(-1, rx_runtime_add_node(NULL, &tn.node, 0, 0));
 }
 
 static void runtime_add_node_rejects_null_node(void) {
@@ -244,7 +244,7 @@ static void runtime_add_node_rejects_null_node(void) {
     rx_runtime rt;
     rx_context_init(&ctx);
     rx_runtime_init(&rt, &ctx, 4);
-    ASSERT_EQ(-1, rx_runtime_add_node(&rt, NULL));
+    ASSERT_EQ(-1, rx_runtime_add_node(&rt, NULL, 0, 0));
 }
 
 static void runtime_add_node_beyond_capacity_returns_error(void) {
@@ -260,9 +260,9 @@ static void runtime_add_node_beyond_capacity_returns_error(void) {
         test_node_init(&nodes[i]);
     }
 
-    ASSERT_EQ(0, rx_runtime_add_node(&rt, &nodes[0].node));
-    ASSERT_EQ(0, rx_runtime_add_node(&rt, &nodes[1].node));
-    ASSERT_EQ(-1, rx_runtime_add_node(&rt, &nodes[2].node)); /* capacity 2, third must fail */
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &nodes[0].node, 0, 0));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &nodes[1].node, 0, 0));
+    ASSERT_EQ(-1, rx_runtime_add_node(&rt, &nodes[2].node, 0, 0)); /* capacity 2, third must fail */
 }
 
 static void tick_rejects_null_runtime(void) {
@@ -277,7 +277,7 @@ static void tick_calls_all_phases_on_registered_node(void) {
     rx_context_init(&ctx);
     rx_runtime_init(&rt, &ctx, 1);
     test_node_init(&tn);
-    rx_runtime_add_node(&rt, &tn.node);
+    rx_runtime_add_node(&rt, &tn.node, 0, 0);
 
     rx_tick(&rt);
 
@@ -314,8 +314,8 @@ static void tick_phases_execute_in_correct_order(void) {
     b.order_count = &count;
     b.phase_id    = 2; /* encodes as 20=latch,21=eval,22=commit,23=dump */
 
-    rx_runtime_add_node(&rt, &a.node);
-    rx_runtime_add_node(&rt, &b.node);
+    rx_runtime_add_node(&rt, &a.node, 0, 0);
+    rx_runtime_add_node(&rt, &b.node, 0, 0);
 
     rx_tick(&rt);
 
@@ -344,7 +344,7 @@ static void tick_deferred_actions_run_after_all_commits(void) {
     rx_context_init(&ctx);
     rx_runtime_init(&rt, &ctx, 1);
     test_node_init(&tn);
-    rx_runtime_add_node(&rt, &tn.node);
+    rx_runtime_add_node(&rt, &tn.node, 0, 0);
 
     g_action_calls = 0;
 
@@ -364,6 +364,86 @@ static void runtime_free_null_is_safe(void) {
 
 static void runtime_destroy_null_is_safe(void) {
     rx_runtime_destroy(NULL); /* must not crash */
+}
+
+/* ------------------------------------------------------------------ */
+/* Priority deferred action tests                                       */
+/* ------------------------------------------------------------------ */
+
+static void action_low(rx_context *ctx, void *user) {
+    (void)ctx; (void)user;
+    g_order_buf[g_order_count++] = 1; /* LOW */
+}
+static void action_high(rx_context *ctx, void *user) {
+    (void)ctx; (void)user;
+    g_order_buf[g_order_count++] = 3; /* HIGH */
+}
+static void action_normal(rx_context *ctx, void *user) {
+    (void)ctx; (void)user;
+    g_order_buf[g_order_count++] = 2; /* NORMAL */
+}
+static void action_critical(rx_context *ctx, void *user) {
+    (void)ctx; (void)user;
+    g_order_buf[g_order_count++] = 4; /* CRITICAL */
+}
+
+static void priority_high_runs_before_low(void) {
+    rx_context ctx;
+    rx_context_init(&ctx);
+    g_order_count = 0;
+
+    rx_context_enqueue_deferred_action_p(&ctx, action_low,  NULL, RX_PRIORITY_LOW);
+    rx_context_enqueue_deferred_action_p(&ctx, action_high, NULL, RX_PRIORITY_HIGH);
+    rx_context_run_deferred_actions(&ctx);
+
+    ASSERT_EQ(2, g_order_count);
+    ASSERT_EQ(3, g_order_buf[0]); /* HIGH first */
+    ASSERT_EQ(1, g_order_buf[1]); /* LOW second */
+}
+
+static void priority_fifo_within_same_priority(void) {
+    rx_context ctx;
+    rx_context_init(&ctx);
+    g_order_count = 0;
+
+    rx_context_enqueue_deferred_action_p(&ctx, action_A, NULL, RX_PRIORITY_NORMAL);
+    rx_context_enqueue_deferred_action_p(&ctx, action_B, NULL, RX_PRIORITY_NORMAL);
+    rx_context_run_deferred_actions(&ctx);
+
+    ASSERT_EQ(2,    g_order_count);
+    ASSERT_EQ(0xA,  g_order_buf[0]); /* A first (FIFO) */
+    ASSERT_EQ(0xB,  g_order_buf[1]); /* B second */
+}
+
+static void priority_mixed_order(void) {
+    rx_context ctx;
+    rx_context_init(&ctx);
+    g_order_count = 0;
+
+    rx_context_enqueue_deferred_action_p(&ctx, action_normal,   NULL, RX_PRIORITY_NORMAL);
+    rx_context_enqueue_deferred_action_p(&ctx, action_low,      NULL, RX_PRIORITY_LOW);
+    rx_context_enqueue_deferred_action_p(&ctx, action_critical, NULL, RX_PRIORITY_CRITICAL);
+    rx_context_enqueue_deferred_action_p(&ctx, action_high,     NULL, RX_PRIORITY_HIGH);
+    rx_context_run_deferred_actions(&ctx);
+
+    /* Expected order: CRITICAL(4), HIGH(3), NORMAL(2), LOW(1) */
+    ASSERT_EQ(4, g_order_count);
+    ASSERT_EQ(4, g_order_buf[0]);
+    ASSERT_EQ(3, g_order_buf[1]);
+    ASSERT_EQ(2, g_order_buf[2]);
+    ASSERT_EQ(1, g_order_buf[3]);
+}
+
+static void dispatch_deferred_null_pool_runs_inline(void) {
+    rx_context ctx;
+    rx_context_init(&ctx);
+    g_action_calls = 0;
+
+    rx_context_enqueue_deferred_action(&ctx, counting_action, NULL);
+    rx_context_dispatch_deferred(&ctx);
+
+    ASSERT_EQ(1, g_action_calls);
+    ASSERT_EQ(0, (int)ctx.deferred_count);
 }
 
 /* ------------------------------------------------------------------ */
@@ -404,6 +484,12 @@ int main(void) {
     RUN_TEST(tick_calls_all_phases_on_registered_node);
     RUN_TEST(tick_phases_execute_in_correct_order);
     RUN_TEST(tick_deferred_actions_run_after_all_commits);
+
+    TEST_SUITE("priority deferred actions");
+    RUN_TEST(priority_high_runs_before_low);
+    RUN_TEST(priority_fifo_within_same_priority);
+    RUN_TEST(priority_mixed_order);
+    RUN_TEST(dispatch_deferred_null_pool_runs_inline);
 
     TEST_SUMMARY();
 }

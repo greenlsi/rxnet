@@ -51,6 +51,12 @@ static const rx_node_vtable RX_FSM_MACHINE_VTABLE = {
     .dump_outputs = rx_fsm_machine_dump_outputs,
 };
 
+static int
+rx_fsm_runtime_tick_fn(rx_runtime *base)
+{
+    return rx_fsm_tick((rx_fsm_runtime *)base);
+}
+
 int rx_fsm_runtime_init(
     rx_fsm_runtime *runtime,
     size_t machine_capacity
@@ -68,6 +74,7 @@ int rx_fsm_runtime_init(
         return -1;
     }
 
+    runtime->runtime.tick = rx_fsm_runtime_tick_fn;
     return 0;
 }
 
@@ -161,7 +168,8 @@ void rx_fsm_machine_destroy(rx_fsm_machine *machine) {
     free(machine);
 }
 
-int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine) {
+int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine,
+                               long period_us, long deadline_us) {
     if (runtime == NULL || machine == NULL) {
         return -1;
     }
@@ -170,7 +178,7 @@ int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine)
     }
 
     machine->node.vtable = &RX_FSM_MACHINE_VTABLE;
-    return rx_runtime_add_node(&runtime->runtime, &machine->node);
+    return rx_runtime_add_node(&runtime->runtime, &machine->node, period_us, deadline_us);
 }
 
 int rx_fsm_tick(rx_fsm_runtime *runtime) {

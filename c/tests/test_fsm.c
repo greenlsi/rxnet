@@ -60,7 +60,7 @@ static int fsm_fixture_init(
     rx_fsm_machine_init(&f->machine, "test", initial_state,
                         transitions, transition_count, user,
                         noop_latch, noop_dump);
-    return rx_fsm_runtime_add_machine(&f->rt, &f->machine);
+    return rx_fsm_runtime_add_machine(&f->rt, &f->machine, 0, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -91,7 +91,7 @@ static void fsm_add_machine_rejects_null_latch(void) {
     rx_fsm_machine m;
     rx_fsm_runtime_init(&rt, 1);
     rx_fsm_machine_init(&m, "m", 0, NULL, 0, NULL, NULL, noop_dump);
-    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m));
+    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
 }
 
 static void fsm_add_machine_rejects_null_dump(void) {
@@ -99,7 +99,7 @@ static void fsm_add_machine_rejects_null_dump(void) {
     rx_fsm_machine m;
     rx_fsm_runtime_init(&rt, 1);
     rx_fsm_machine_init(&m, "m", 0, NULL, 0, NULL, noop_latch, NULL);
-    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m));
+    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
 }
 
 static void fsm_machine_destroy_null_is_safe(void) {
@@ -286,8 +286,8 @@ static void fsm_two_machines_tick_independently(void) {
     rx_fsm_machine_init(&m1, "m1", STATE_A, trans_m1, 1, NULL, noop_latch, noop_dump);
     rx_fsm_machine_init(&m2, "m2", STATE_A, trans_m2, 1, NULL, noop_latch, noop_dump);
 
-    rx_fsm_runtime_add_machine(&rt, &m1);
-    rx_fsm_runtime_add_machine(&rt, &m2);
+    rx_fsm_runtime_add_machine(&rt, &m1, 0, 0);
+    rx_fsm_runtime_add_machine(&rt, &m2, 0, 0);
 
     rx_fsm_tick(&rt);
 

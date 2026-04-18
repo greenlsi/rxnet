@@ -132,8 +132,8 @@ int main(void)
     }
 
     /* Register both in the SAME base runtime. */
-    if (rx_runtime_add_node(&rt, &light_a.node) != 0 ||
-        rx_runtime_add_node(&rt, &light_b.node) != 0) {
+    if (rx_runtime_add_node(&rt, &light_a.node, 0, 0) != 0 ||
+        rx_runtime_add_node(&rt, &light_b.node, 0, 0) != 0) {
         fprintf(stderr, "rx_runtime_add_node failed\n");
         rx_pn_net_free(&light_b);
         rx_context_free(&ctx);
@@ -161,7 +161,7 @@ int main(void)
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
-    if (rx_fsm_runtime_add_machine(&cli_rt, &cli_machine) != 0) {
+    if (rx_fsm_runtime_add_machine(&cli_rt, &cli_machine, 0, 0) != 0) {
         fprintf(stderr, "rx_fsm_runtime_add_machine failed\n");
         rx_pn_net_free(&light_b);
         rx_fsm_runtime_free(&cli_rt);

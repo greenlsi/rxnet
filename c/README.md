@@ -5,13 +5,13 @@ It supports two model families — **FSM** and **Petri Net** — that share one 
 
 ## Tick phases (per cycle)
 
-1. **Latch inputs** — each node snapshots its inputs atomically
-2. **Evaluate** — compute next state / fire transitions (read-only on committed state)
+1. **Latch inputs** — each node snapshots its inputs
+2. **Evaluate** — compute next state / fire transitions (read-only on latched snapshot)
 3. **Commit** — publish new state; enqueue deferred actions
 4. **Run deferred actions** — callbacks fire after all commits are visible
 5. **Dump outputs** — each node writes its outputs to hardware or downstream
 
-All nodes observe a consistent snapshot.  Guards in phase 2 never see a half-committed state.
+All nodes in a tick observe a consistent snapshot.  Guards in phase 2 never see a half-committed state.
 
 ## When to use FSM vs Petri Net
 
@@ -20,22 +20,20 @@ All nodes observe a consistent snapshot.  Guards in phase 2 never see a half-com
 | **Model** | State machine: one active state at a time | Token-flow graph: concurrent marking |
 | **Transitions** | `from_state → to_state` guarded by a boolean | `consume arcs → produce arcs`, enabled by token counts |
 | **Good for** | Linear state sequences, UI flows, mode control | Concurrency, resource sharing, event counting |
-| **Actions** | One action per fired transition | One action per fired transition |
 | **Example use** | Button toggles ON↔OFF | Blink with speed levels (OFF / X1 / X2) |
 
 Use FSM when states are mutually exclusive.  
 Use Petri Net when you need concurrency or event accumulation within a single node.
 
-Both types are `rx_node` subtypes and can share a single `rx_runtime` tick (see `examples/mixed/`).
+Both types are `rx_node` subtypes and can share a single `rx_runtime` (see `examples/mixed/`).
 
 ## Build
 
-Standard C11.  No external dependencies.
+Standard C99.  No external dependencies (threads require `-lpthread`).
 
 ```bash
 make          # build library + all examples
-make test     # run unit tests (71 tests)
-make parity   # run C/Python cross-language parity check
+make test     # run unit tests
 make clean
 ```
 
@@ -43,7 +41,80 @@ Override compiler or flags:
 
 ```bash
 CC=clang make
-CFLAGS="-std=c11 -O2 -Iinclude" make
+CFLAGS="-std=c99 -O2 -Iinclude" make
+```
+
+## Multi-rate scheduling
+
+Periods are registered **per node**, not per runtime.  The runtime builds a
+hyperperiod dispatch table automatically:
+
+```c
+rx_fsm_runtime_add_machine(&rt, &light_a, 10000, 0);  /* 10 ms */
+rx_fsm_runtime_add_machine(&rt, &blink_b, 10000, 0);  /* 10 ms */
+rx_fsm_runtime_add_machine(&rt, &auto_c,  20000, 0);  /* 20 ms */
+/* base = GCD(10, 10, 20) = 10 ms → 2 slots
+   slot 0: light_a + blink_b + auto_c
+   slot 1: light_a + blink_b              */
+```
+
+Nodes with `period_us = 0` are async: they run every base tick but advance only when their own guards fire.
+
+## Executors
+
+Three executors are provided.  All read `rt->period_us` (set by the runtime
+build step) and handle timing internally.
+
+### `rx_cyclic_exec` — cyclic executive
+
+Static hyperperiod dispatch table.  Single thread, deterministic slot order.
+Suitable for bare-metal and simple RTOS configurations.
+
+```c
+rx_cyclic_exec ce;
+rx_cyclic_exec_init(&ce);
+rx_cyclic_exec_add(&ce, &runtime.runtime);
+rx_cyclic_exec_run(&ce); /* never returns */
+```
+
+### `rx_coop_exec` — cooperative multi-rate
+
+Dynamic deadline scheduling: runs whichever runtime is due, then sleeps until
+the nearest next deadline.  Single thread — no mutexes needed, suitable for
+cooperative RTOS patterns.
+
+```c
+rx_coop_exec ce;
+rx_coop_exec_init(&ce);
+rx_coop_exec_add(&ce, &runtime.runtime);
+rx_coop_exec_run(&ce); /* never returns */
+```
+
+Multiple runtimes can be registered; the scheduler picks the earliest deadline across all of them.
+
+### `rx_thread_exec` — parallel thread-per-node (BSP barriers)
+
+One pthread per node.  Two barriers per hyperperiod slot enforce the
+reactive-synchronous guarantee with true parallelism:
+
+- **latch_b[s]**: all nodes active in slot s arrive → latch inputs in parallel → evaluate in parallel.
+- **commit_b[s]**: all evaluations done → commit outputs in parallel.
+
+Each node gets its own `rx_context` (no shared deferred queue).
+The last node of the last runtime runs in the calling (main) thread.
+
+```c
+rx_thread_exec te;
+rx_thread_exec_init(&te);
+rx_thread_exec_add(&te, &runtime.runtime);  /* one runtime: all nodes get threads */
+rx_thread_exec_run(&te); /* never returns */
+```
+
+Multiple runtimes can be registered; each forms an independent barrier group:
+
+```c
+rx_thread_exec_add(&te, &pn_rt.runtime);   /* PN nodes → parallel threads */
+rx_thread_exec_add(&te, &cli_rt.runtime);  /* FSM cli → main thread (last) */
 ```
 
 ## Examples
@@ -51,40 +122,40 @@ CFLAGS="-std=c11 -O2 -Iinclude" make
 ### FSM examples
 
 ```bash
-make light_cli && ./build/fsm_00_light   # on/off toggle
-make auto_cli  && ./build/fsm_01_auto    # auto-off timer
-make blink_cli && ./build/fsm_02_blink   # blink with speed control
-make mix_cli   && ./build/fsm_03_mix     # all three FSMs together
+make light_cli && ./build/fsm_00_light        # on/off toggle
+make auto_cli  && ./build/fsm_01_auto         # auto-off timer
+make blink_cli && ./build/fsm_02_blink        # blink with speed control
+make mix_cli   && ./build/fsm_03_mix          # cyclic executive
+make mix_coop  && ./build/fsm_03_mix_coop     # cooperative scheduler
+make mix_threads && ./build/fsm_03_mix_threads  # parallel threads
 ```
 
 ### Petri Net examples
 
 ```bash
-make pn_01_light && ./build/pn_01_light  # on/off toggle (PN)
-make pn_02_auto  && ./build/pn_02_auto   # auto-off (PN)
-make pn_03_blink && ./build/pn_03_blink  # blink with speed levels (PN)
-make pn_04_mix   && ./build/pn_04_mix    # all three PNs + FSM CLI
+make pn_00_light && ./build/pn_00_light            # on/off toggle (PN)
+make pn_01_auto  && ./build/pn_01_auto             # auto-off (PN)
+make pn_02_blink && ./build/pn_02_blink            # blink with speed levels (PN)
+make pn_03_mix   && ./build/pn_03_mix              # cyclic executive
+make pn_03_mix_coop && ./build/pn_03_mix_coop      # cooperative scheduler
+make pn_03_mix_threads && ./build/pn_03_mix_threads  # parallel threads
 ```
 
 ### Mixed FSM + PN in one runtime
 
 ```bash
-make mixed && ./build/mixed    # FSM light (button A) + PN light (button B), shared rx_runtime
+make mixed && ./build/mixed    # FSM light (button A) + PN light (button B)
 ```
 
 ## Basic integration pattern
 
 ```c
-#include "rxnet/fsm.h"   /* or pn.h */
+#include "rxnet/fsm.h"
 
-/* 1. Declare runtime and machine */
 rx_fsm_runtime runtime;
 rx_fsm_machine machine;
-
-/* 2. Declare user data (inputs + state, owned by the node) */
 int button = 0;
 
-/* 3. Latch and dump callbacks */
 static void latch(rx_fsm_context *ctx, void *user) {
     (void)ctx;
     *(int *)user = read_gpio(BUTTON_PIN);
@@ -94,73 +165,20 @@ static int guard(const rx_fsm_context *ctx, void *user) {
     return *(int *)user;
 }
 
-/* 4. Transition table */
 static const rx_fsm_transition transitions[] = {
     {STATE_OFF, STATE_ON,  guard, NULL},
     {STATE_ON,  STATE_OFF, guard, NULL},
 };
 
-/* 5. Init and run */
 rx_fsm_runtime_init(&runtime, 1);
 rx_fsm_machine_init(&machine, "light", STATE_OFF,
                     transitions, 2, &button, latch, /*dump=*/NULL);
-rx_fsm_runtime_add_machine(&runtime, &machine);
+rx_fsm_runtime_add_machine(&runtime, &machine, 10000, 0); /* 10 ms */
 
-while (1) {
-    rx_fsm_tick(&runtime);
-    /* sleep to next period */
-}
-```
-
-## Concurrency patterns
-
-All three patterns work without library changes:
-
-### Cyclic executive (bare-metal)
-
-```c
-/* ISR: word-sized write is atomic on ARM Cortex-M */
-void BUTTON_IRQHandler(void) { inputs.button = 1; }
-
-while (1) {
-    rx_fsm_tick(&runtime);   /* latch takes snapshot at start of tick */
-    /* sleep to next period */
-}
-```
-
-### OS threads (POSIX / Win32)
-
-```c
-/* Writer thread: */
-pthread_mutex_lock(&lock);
-inputs.button = 1;
-pthread_mutex_unlock(&lock);
-
-/* Tick thread: */
-while (1) {
-    pthread_mutex_lock(&lock);
-    rx_fsm_tick(&runtime);
-    pthread_mutex_unlock(&lock);
-    nanosleep(&period, NULL);
-}
-```
-
-### RTOS cooperative (FreeRTOS)
-
-```c
-/* ISR or driver task: */
-void button_isr(void) {
-    inputs.button = 1;                  /* atomic word write */
-    xTaskNotifyGive(tick_task_handle);  /* wake tick task */
-}
-
-/* Tick task: */
-void tick_task(void *arg) {
-    while (1) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        rx_fsm_tick(&runtime);
-    }
-}
+rx_cyclic_exec ce;
+rx_cyclic_exec_init(&ce);
+rx_cyclic_exec_add(&ce, &runtime.runtime);
+rx_cyclic_exec_run(&ce);
 ```
 
 ## Specs

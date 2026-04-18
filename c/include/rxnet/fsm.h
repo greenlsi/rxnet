@@ -73,7 +73,14 @@ rx_fsm_machine *rx_fsm_machine_create(
 );
 void rx_fsm_machine_destroy(rx_fsm_machine *machine);
 
-int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine);
+/*
+ * Register a machine in the runtime with its scheduling parameters.
+ *
+ * period_us   Activation period (µs).  0 = async (runs every base tick).
+ * deadline_us Relative deadline (µs).  0 = same as period_us.
+ */
+int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine,
+                               long period_us, long deadline_us);
 int rx_fsm_tick(rx_fsm_runtime *runtime);
 
 #ifdef __cplusplus

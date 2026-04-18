@@ -156,10 +156,10 @@ main(void)
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
-    if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &light_b_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &light_c_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &cli_machine) != 0) {
+    if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &light_b_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &light_c_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &cli_machine, 0, 0) != 0) {
         fprintf(stderr, "rx_fsm_runtime_add_machine failed\n");
         rx_fsm_runtime_free(&runtime);
         return 1;

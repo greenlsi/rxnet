@@ -34,9 +34,9 @@ void app_main(void) {
     light_fsm_create(&light_b_machine, BUTTON_A_GPIO, LIGHT_B_GPIO);
     light_fsm_create(&light_c_machine, BUTTON_B_GPIO, LIGHT_C_GPIO);
 
-    if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &light_b_machine) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &light_c_machine) != 0) {
+    if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &light_b_machine, 0, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &light_c_machine, 0, 0) != 0) {
         ESP_LOGE(TAG, "rx_fsm_runtime_add_machine failed");
         rx_fsm_runtime_free(&runtime);
         return;

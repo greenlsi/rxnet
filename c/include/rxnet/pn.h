@@ -85,7 +85,14 @@ rx_pn_net *rx_pn_net_create(
 void rx_pn_net_free(rx_pn_net *net);
 void rx_pn_net_destroy(rx_pn_net *net);
 
-int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net);
+/*
+ * Register a net in the runtime with its scheduling parameters.
+ *
+ * period_us   Activation period (µs).  0 = async (runs every base tick).
+ * deadline_us Relative deadline (µs).  0 = same as period_us.
+ */
+int rx_pn_runtime_add_net(rx_pn_runtime *runtime, rx_pn_net *net,
+                          long period_us, long deadline_us);
 int rx_pn_tick(rx_pn_runtime *runtime);
 
 #ifdef __cplusplus
