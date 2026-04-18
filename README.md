@@ -42,8 +42,8 @@ make parity       # cross-language parity check vs Python
 Run an example:
 
 ```bash
-./build/fsm_00_light    # button toggles light (FSM)
-./build/pn_00_light     # button toggles light (PN)
+./build/fsm_01_light    # button toggles light (FSM)
+./build/pn_01_light     # button toggles light (PN)
 ./build/mixed           # FSM + PN sharing one rx_runtime
 ```
 
@@ -63,14 +63,14 @@ Requires Python 3.11+.
 
 | Path | Model | Demonstrates |
 |---|---|---|
-| `c/examples/fsm/00-light/` | FSM | Simple on/off toggle |
-| `c/examples/fsm/01-auto/` | FSM | Auto-off after timeout |
-| `c/examples/fsm/02-blink/` | FSM | Blink with speed control |
-| `c/examples/fsm/03-mix/` | FSM | Multiple FSMs in one runtime |
-| `c/examples/pn/00-light/` | PN | Simple on/off toggle |
-| `c/examples/pn/01-auto/` | PN | Auto-off after timeout |
-| `c/examples/pn/02-blink/` | PN | Blink with speed levels (OFF/X1/X2) |
-| `c/examples/pn/03-mix/` | FSM + PN | Multiple PNs + FSM CLI |
+| `c/examples/fsm/01-light/` | FSM | Simple on/off toggle |
+| `c/examples/fsm/02-auto/` | FSM | Auto-off after timeout |
+| `c/examples/fsm/03-blink/` | FSM | Blink with speed control |
+| `c/examples/fsm/04-mix/` | FSM | Multiple FSMs in one runtime |
+| `c/examples/pn/01-light/` | PN | Simple on/off toggle |
+| `c/examples/pn/02-auto/` | PN | Auto-off after timeout |
+| `c/examples/pn/03-blink/` | PN | Blink with speed levels (OFF/X1/X2) |
+| `c/examples/pn/04-mix/` | FSM + PN | Multiple PNs + FSM CLI |
 | `c/examples/mixed/` | FSM + PN | Shared base `rx_runtime` |
 
 ## Specs
