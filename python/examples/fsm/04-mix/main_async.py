@@ -1,29 +1,28 @@
-"""FSM 04-mix — cyclic executive with hyperperiod dispatch table.
+"""FSM 04-mix — async variant (cooperative multitasking with asyncio).
 
-All three machines share a single runtime; periods are registered
-per-machine::
+Two asyncio Tasks run at different periods, yielding at every
+``await asyncio.sleep()``.  No OS threads: a single Python thread
+runs everything cooperatively.
 
-    light_a  10 ms
-    blink_b  10 ms
-    auto_c   20 ms
-    cli_node 10 ms
+  fast-task (10 ms): light_a + blink_b — share button A, same tick.
+  slow-task (20 ms): auto_c — button B only.
+  cli-task  (10 ms): polls the CLI queue, dispatches commands.
 
-The runtime builds the hyperperiod table:
-    base  = GCD(10, 10, 20, 10) = 10 ms
-    hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
-
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nodes scheduled for that slot.
+Contrast with main_threads.py:
+  - Single thread, no GIL contention, no OS scheduling overhead.
+  - Tasks cannot run truly in parallel: one runs while others await.
+  - Preemption only at explicit ``await`` points (cooperative).
 
 Usage::
 
     cd python
-    uv run examples/fsm/04-mix/main.py
+    uv run examples/fsm/04-mix/main_async.py
 """
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
@@ -33,15 +32,14 @@ sys.path.insert(0, str(Path(examples_root) / "fsm" / "01-light"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "02-auto"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "03-blink"))
 
-from rxnet.cyclic import CyclicExecutive
 from rxnet.fsm import Machine, Runtime
-from rxnet.runtime import Context
 
 import app_driver
 from cli import Cli
 from light_fsm import LIGHT_STATE_ON, create_light_fsm
 from auto_fsm import AUTO_STATE_ON, create_auto_fsm, get_auto_off_timeout_ms, set_auto_off_timeout_ms
 from blink_fsm import (
+    BLINK_STATE_OFF,
     BLINK_STATE_X1,
     BLINK_STATE_X2,
     create_blink_fsm,
@@ -57,37 +55,34 @@ BUTTON_A_GPIO = 0
 BUTTON_B_GPIO = 15
 DEFAULT_FREQ_B_HZ = 2
 DEFAULT_TIMEOUT_C_MS = 9000
-
-FAST_PERIOD_US = 10_000
-SLOW_PERIOD_US = 20_000
-CLI_PERIOD_US  = 10_000
-
-
-# ------------------------------------------------------------------ #
-# CLI node wrapper                                                     #
-# ------------------------------------------------------------------ #
-
-class CliNode:
-    """Wraps Cli as a Runtime Node.  Dispatches one command per dump phase."""
-
-    def __init__(self, cli: Cli) -> None:
-        self._cli = cli
-
-    def latch_inputs(self, ctx: Context) -> None:
-        pass
-
-    def evaluate(self, ctx: Context) -> None:
-        pass
-
-    def commit(self, ctx: Context) -> None:
-        pass
-
-    def dump_outputs(self, ctx: Context) -> None:
-        self._cli.tick()
+FAST_PERIOD_S = 0.010   # 10 ms
+SLOW_PERIOD_S = 0.020   # 20 ms
+CLI_PERIOD_S  = 0.010   # 10 ms
 
 
 # ------------------------------------------------------------------ #
-# CLI command handlers                                                 #
+# Async tasks                                                          #
+# ------------------------------------------------------------------ #
+
+async def run_rt(rt: Runtime, period_s: float) -> None:
+    """Tick *rt* at *period_s*, yielding to the event loop between ticks."""
+    next_tick = asyncio.get_event_loop().time()
+    while True:
+        rt.tick()
+        next_tick += period_s
+        delay = next_tick - asyncio.get_event_loop().time()
+        await asyncio.sleep(max(0.0, delay))
+
+
+async def run_cli(cli: Cli) -> None:
+    """Poll the CLI queue and dispatch commands, yielding between polls."""
+    while True:
+        cli.tick()
+        await asyncio.sleep(CLI_PERIOD_S)
+
+
+# ------------------------------------------------------------------ #
+# CLI commands                                                         #
 # ------------------------------------------------------------------ #
 
 def _light_state(state: int) -> str:
@@ -128,9 +123,9 @@ def cmd_button_b(line: str, user: object) -> None:
 def cmd_status(line: str, machines: tuple[Machine, Machine, Machine]) -> None:
     light_a, blink_b, auto_c = machines
     print(
-        f"A(light): state={_light_state(light_a.state)}"
+        f"A(light): state={_light_state(light_a.state)} output={int(light_a.state != 0)}"
         f" | B(blink): state={_blink_state(blink_b.state)} output={int(get_output_enabled(blink_b))}"
-        f" | C(auto): state={_light_state(auto_c.state)}"
+        f" | C(auto): state={_light_state(auto_c.state)} output={int(auto_c.state != 0)}"
     )
     print(
         f"B freq(hz): base={get_base_hz(blink_b)} effective={_effective_hz(blink_b)}"
@@ -187,14 +182,20 @@ def cmd_quit(line: str, user: object) -> None:
 # Main                                                                 #
 # ------------------------------------------------------------------ #
 
-def main() -> None:
+async def amain() -> None:
     light_a = create_light_fsm(BUTTON_A_GPIO, LIGHT_A_GPIO)
     blink_b = create_blink_fsm(BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ)
     auto_c  = create_auto_fsm(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
 
-    cli = Cli()
-    machines = (light_a, blink_b, auto_c)
+    fast_rt = Runtime()
+    fast_rt.add_machine(light_a)
+    fast_rt.add_machine(blink_b)
 
+    slow_rt = Runtime()
+    slow_rt.add_machine(auto_c)
+
+    machines = (light_a, blink_b, auto_c)
+    cli = Cli()
     cli.register("a",        cmd_button_a)
     cli.register("press a",  cmd_button_a)
     cli.register("b",        cmd_button_b)
@@ -208,23 +209,22 @@ def main() -> None:
     cli.add_help_line("freq <hz>")
     cli.add_help_line("timeout <ms>")
 
-    cli_node = CliNode(cli)
-
-    # All nodes in a single runtime — periods registered per-node.
-    # The runtime builds the hyperperiod table (base=10 ms, 2 slots).
-    rt = Runtime()
-    rt.add_machine(light_a,  FAST_PERIOD_US)
-    rt.add_machine(blink_b,  FAST_PERIOD_US)
-    rt.add_machine(auto_c,   SLOW_PERIOD_US)
-    rt.add_node(cli_node,    CLI_PERIOD_US)
-
     cli.print_help()
     cmd_status("status", machines)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
-    ce.add(rt)
-    ce.run()  # never returns
+    await asyncio.gather(
+        run_rt(fast_rt, FAST_PERIOD_S),
+        run_rt(slow_rt, SLOW_PERIOD_S),
+        run_cli(cli),
+    )
+
+
+def main() -> None:
+    try:
+        asyncio.run(amain())
+    except KeyboardInterrupt:
+        print("\nbye")
 
 
 if __name__ == "__main__":

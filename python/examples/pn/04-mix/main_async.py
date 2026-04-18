@@ -1,28 +1,24 @@
-"""PN 04-mix — cyclic executive with hyperperiod dispatch table.
+"""PN 04-mix — async variant (cooperative multitasking with asyncio).
 
-All three nets share a single runtime; periods are registered
-per-net::
+Two asyncio Tasks run at different periods, yielding at every
+``await asyncio.sleep()``.  Single Python thread, no GIL contention.
 
-    light_a  10 ms
-    blink_b  10 ms
-    auto_c   20 ms
-    cli_node 10 ms
+  fast-task (10 ms): light_a + blink_b — share button A, same tick.
+  slow-task (20 ms): auto_c — button B only.
+  cli-task  (10 ms): polls CLI queue, dispatches commands.
 
-The runtime builds the hyperperiod table:
-    base  = GCD(10, 10, 20, 10) = 10 ms
-    hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
-
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nets scheduled for that slot.
+Contrast with main_threads.py:
+  - Single thread: no parallel execution, no race conditions.
+  - Tasks yield voluntarily at ``await`` — cooperative, not preemptive.
 
 Usage::
 
     cd python
-    uv run examples/pn/04-mix/main.py
+    uv run examples/pn/04-mix/main_async.py
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -33,9 +29,7 @@ sys.path.insert(0, str(Path(examples_root) / "pn" / "01-light"))
 sys.path.insert(0, str(Path(examples_root) / "pn" / "02-auto"))
 sys.path.insert(0, str(Path(examples_root) / "pn" / "03-blink"))
 
-from rxnet.cyclic import CyclicExecutive
 from rxnet.pn import Net, Runtime as PnRuntime
-from rxnet.runtime import Context
 
 import app_driver
 from cli import Cli
@@ -50,37 +44,32 @@ BUTTON_A_GPIO = 0
 BUTTON_B_GPIO = 15
 DEFAULT_FREQ_B_HZ = 2
 DEFAULT_TIMEOUT_C_MS = 9000
-
-FAST_PERIOD_US = 10_000
-SLOW_PERIOD_US = 20_000
-CLI_PERIOD_US  = 10_000
-
-
-# ------------------------------------------------------------------ #
-# CLI node wrapper                                                     #
-# ------------------------------------------------------------------ #
-
-class CliNode:
-    """Wraps Cli as a Runtime Node.  Dispatches one command per dump phase."""
-
-    def __init__(self, cli: Cli) -> None:
-        self._cli = cli
-
-    def latch_inputs(self, ctx: Context) -> None:
-        pass
-
-    def evaluate(self, ctx: Context) -> None:
-        pass
-
-    def commit(self, ctx: Context) -> None:
-        pass
-
-    def dump_outputs(self, ctx: Context) -> None:
-        self._cli.tick()
+FAST_PERIOD_S = 0.010
+SLOW_PERIOD_S = 0.020
+CLI_PERIOD_S  = 0.010
 
 
 # ------------------------------------------------------------------ #
-# CLI command handlers                                                 #
+# Async tasks                                                          #
+# ------------------------------------------------------------------ #
+
+async def run_rt(rt: PnRuntime, period_s: float) -> None:
+    next_tick = asyncio.get_event_loop().time()
+    while True:
+        rt.tick()
+        next_tick += period_s
+        delay = next_tick - asyncio.get_event_loop().time()
+        await asyncio.sleep(max(0.0, delay))
+
+
+async def run_cli(cli: Cli) -> None:
+    while True:
+        cli.tick()
+        await asyncio.sleep(CLI_PERIOD_S)
+
+
+# ------------------------------------------------------------------ #
+# CLI commands                                                         #
 # ------------------------------------------------------------------ #
 
 def _light_state(net: Net, p_on: int) -> str:
@@ -180,14 +169,20 @@ def cmd_quit(line: str, user: object) -> None:
 # Main                                                                 #
 # ------------------------------------------------------------------ #
 
-def main() -> None:
+async def amain() -> None:
     light_a = create_light_pn(BUTTON_A_GPIO, LIGHT_A_GPIO)
     blink_b = create_blink_pn(BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ)
     auto_c  = create_auto_pn(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
 
-    cli = Cli()
-    nets = (light_a, blink_b, auto_c)
+    fast_rt = PnRuntime()
+    fast_rt.add_net(light_a)
+    fast_rt.add_net(blink_b)
 
+    slow_rt = PnRuntime()
+    slow_rt.add_net(auto_c)
+
+    nets = (light_a, blink_b, auto_c)
+    cli = Cli()
     cli.register("a",        cmd_button_a)
     cli.register("press a",  cmd_button_a)
     cli.register("b",        cmd_button_b)
@@ -201,23 +196,22 @@ def main() -> None:
     cli.add_help_line("freq <hz>")
     cli.add_help_line("timeout <ms>")
 
-    cli_node = CliNode(cli)
-
-    # All nodes in a single runtime — periods registered per-node.
-    # The runtime builds the hyperperiod table (base=10 ms, 2 slots).
-    rt = PnRuntime()
-    rt.add_net(light_a,  FAST_PERIOD_US)
-    rt.add_net(blink_b,  FAST_PERIOD_US)
-    rt.add_net(auto_c,   SLOW_PERIOD_US)
-    rt.add_node(cli_node, CLI_PERIOD_US)
-
     cli.print_help()
     cmd_status("status", nets)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
-    ce.add(rt)
-    ce.run()  # never returns
+    await asyncio.gather(
+        run_rt(fast_rt, FAST_PERIOD_S),
+        run_rt(slow_rt, SLOW_PERIOD_S),
+        run_cli(cli),
+    )
+
+
+def main() -> None:
+    try:
+        asyncio.run(amain())
+    except KeyboardInterrupt:
+        print("\nbye")
 
 
 if __name__ == "__main__":

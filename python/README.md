@@ -1,19 +1,17 @@
 # rxnet (Python)
 
 `rxnet` is a small synchronous runtime for reactive models.  
-It supports two model families — **FSM** and **Petri Net** — that share one phase-based execution engine.
+It supports two model families — **FSM** and **Petri Net** — that share one phase-based execution engine and a common set of executors.
 
 ## Tick phases (per cycle)
 
-1. **Latch inputs** — each node's `latch_inputs_cb` runs; nodes snapshot their own inputs
+1. **Latch inputs** — global `ctx.latch_inputs()` snapshots shared inputs; each node's `latch_inputs()` runs
 2. **Evaluate** — all nodes compute next state / fire transitions against the snapshot
-3. **Commit** — all nodes apply their updates; deferred actions are enqueued
-4. **Run deferred actions** — post-commit callbacks fire (timers, side-effects)
-5. **Dump outputs** — each node's `dump_outputs_cb` runs (write outputs, clear flags)
+3. **Commit** — all nodes apply updates; deferred actions are enqueued
+4. **Dispatch deferred** — post-commit callbacks fire (timers, GPIO writes, side-effects)
+5. **Dump outputs** — each node's `dump_outputs()` runs (write outputs, clear flags)
 
 All nodes observe a consistent snapshot.  Guards in phase 2 never see a half-committed peer.
-
-Input ownership stays with each node's own data, passed via the `user` argument to callbacks.
 
 ## When to use FSM vs Petri Net
 
@@ -24,7 +22,7 @@ Input ownership stays with each node's own data, passed via the `user` argument 
 | **Best for** | Linear mode sequences, UI flows | Concurrency, resource sharing, event counting |
 | **Example use** | Button toggles ON↔OFF | Blink with speed levels (OFF/X1/X2) |
 
-Both `Machine` (FSM) and `Net` (PN) are `Node` subtypes and can share a single `Runtime`.
+Both `Machine` (FSM) and `Net` (PN) implement the `Node` protocol and can share a single `Runtime`.
 
 ## Install
 
@@ -35,10 +33,83 @@ uv sync --extra dev
 
 Requires Python 3.11+.
 
+## Multi-rate scheduling
+
+Each node registers its own `period_us` (microseconds).  The runtime
+computes the hyperperiod dispatch table at build time:
+
+```python
+from rxnet.fsm import Machine, Runtime
+
+rt = Runtime()
+rt.add_machine(light_a,  10_000)   # 10 ms
+rt.add_machine(blink_b,  10_000)   # 10 ms
+rt.add_machine(auto_c,   20_000)   # 20 ms
+rt.add_node(cli_node,    10_000)   # 10 ms — any node, not just Machine
+
+# base  = GCD(10, 10, 20, 10) = 10 ms  →  rt.period_us
+# hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
+#
+# slot 0 (t = 0, 20, …): all four nodes
+# slot 1 (t = 10, 30, …): light_a + blink_b + cli_node
+```
+
+`period_us=0` (default) marks a node as *async*: it runs on every base
+tick regardless of slot, preserving backward compatibility with code that
+doesn't register periods.
+
+## Executors
+
+Three executors drive one or more runtimes at the correct intervals.
+
+### `CyclicExecutive` — static hyperperiod dispatch
+
+Calls `rt.tick()` at regular intervals based on `rt.period_us`.  Uses a
+fixed slot table; simplest model, no concurrency.
+
+```python
+from rxnet import CyclicExecutive
+
+ce = CyclicExecutive()
+ce.add(rt)
+ce.run()   # never returns
+```
+
+### `CoopExecutive` — cooperative deadline scheduler
+
+Fires `rt.tick()` whenever the next deadline passes.  Overrun-tolerant:
+deadline advances by one period regardless of actual execution time.
+Supports multiple independent runtimes.
+
+```python
+from rxnet import CoopExecutive
+
+ce = CoopExecutive()
+ce.add(rt)
+ce.run()   # never returns
+```
+
+### `ThreadExecutive` — BSP thread-per-node
+
+Gives each node its own `threading.Thread`.  Three `threading.Barrier`
+objects per hyperperiod slot enforce the reactive-synchronous guarantee
+(latch → evaluate → commit → dump).
+
+The **last node of the last runtime** runs in the calling (main) thread —
+add a `CliNode` last to keep stdin access in the main thread.
+
+```python
+from rxnet import ThreadExecutive
+
+te = ThreadExecutive()
+te.add(rt)
+te.run()   # never returns — last node runs in this thread
+```
+
 ## Basic integration pattern (FSM)
 
 ```python
-from rxnet.fsm import Machine, Transition, Runtime
+from rxnet import Machine, Runtime, Transition, CyclicExecutive
 
 OFF, ON = 0, 1
 button = {"pressed": False}
@@ -46,25 +117,24 @@ button = {"pressed": False}
 def guard(ctx, user):
     return user["pressed"]
 
-transitions = [
-    Transition(from_state=OFF, to_state=ON,  guard=guard),
-    Transition(from_state=ON,  to_state=OFF, guard=guard),
-]
-
 machine = Machine(
     name="light",
     initial_state=OFF,
-    transitions=transitions,
+    transitions=[
+        Transition(from_state=OFF, to_state=ON,  guard=guard),
+        Transition(from_state=ON,  to_state=OFF, guard=guard),
+    ],
     user=button,
     latch_inputs=lambda ctx, user: None,   # fill user["pressed"] here
     dump_outputs=lambda ctx, user: None,   # read machine.state here
 )
 
-runtime = Runtime(capacity=1)
-runtime.add(machine)
+rt = Runtime()
+rt.add_machine(machine, 10_000)   # 10 ms
 
-while True:
-    runtime.tick()
+ce = CyclicExecutive()
+ce.add(rt)
+ce.run()
 ```
 
 ## Tests
@@ -74,7 +144,8 @@ cd python
 uv run --extra dev pytest tests/ -v
 ```
 
-56 tests covering runtime, FSM, and PN semantics.
+Tests cover runtime, FSM, PN semantics, multi-rate scheduling, and BSP
+barrier correctness.
 
 ## Examples
 
@@ -82,6 +153,15 @@ Interactive CLI examples mirror the C examples under `c/examples/`.  They share:
 
 - `examples/app_driver.py` — simulated GPIO driver (host mock)
 - `examples/cli.py` — non-blocking CLI helper using a background stdin thread
+
+Each `04-mix` directory contains four executor variants:
+
+| File | Model |
+|---|---|
+| `main.py` | `CyclicExecutive` — single thread, static dispatch |
+| `main_coop.py` | `CoopExecutive` — single thread, deadline-based |
+| `main_threads.py` | `ThreadExecutive` — BSP thread-per-node |
+| `main_async.py` | asyncio (legacy) |
 
 ### FSM examples
 
@@ -91,7 +171,7 @@ Interactive CLI examples mirror the C examples under `c/examples/`.  They share:
 | `examples/fsm/01-light/` | Simple toggle (button → ON/OFF) |
 | `examples/fsm/02-auto/` | Auto-off timer; button resets countdown |
 | `examples/fsm/03-blink/` | Three-speed blink; button cycles OFF→X1→X2→OFF |
-| `examples/fsm/04-mix/` | One light + one blink + one auto in one runtime |
+| `examples/fsm/04-mix/` | Multi-rate: light + blink + auto in one runtime |
 
 ### Petri Net examples
 
@@ -101,84 +181,19 @@ Interactive CLI examples mirror the C examples under `c/examples/`.  They share:
 | `examples/pn/01-light/` | Token-based toggle (REQUEST place) |
 | `examples/pn/02-auto/` | Auto-off with signal place (P_AUTO_OFF_DUE) |
 | `examples/pn/03-blink/` | Blink with signal place (P_TOGGLE_DUE) |
-| `examples/pn/04-mix/` | One of each PN type in one runtime |
+| `examples/pn/04-mix/` | Multi-rate: light + blink + auto in one runtime |
 
 ### Running
 
 ```bash
 cd python
-uv run examples/fsm/01-light/main.py
-uv run examples/pn/01-light/main.py
-# etc.
+uv run examples/fsm/04-mix/main.py          # cyclic executive
+uv run examples/fsm/04-mix/main_coop.py     # cooperative scheduler
+uv run examples/fsm/04-mix/main_threads.py  # BSP threads
+uv run examples/pn/04-mix/main.py           # same for Petri Nets
 ```
 
-Common commands: `a`, `b`, `status`, `help`, `quit`
-
-## Concurrency
-
-Python's GIL means only one thread executes Python bytecode at a time.  rxnet makes no threading assumptions — choose the pattern that fits your host.
-
-### Cyclic executive (single thread)
-
-The simplest pattern: drive all ticks from one loop.
-
-```python
-import time
-
-while True:
-    inputs["button"] = read_button()
-    runtime.tick()
-    time.sleep(0.01)
-```
-
-### Threading (`threading.Thread`)
-
-Protect both the input write and the tick with a single lock.
-
-```python
-import threading, time
-
-lock = threading.Lock()
-inputs = {"button": False}
-
-def tick_thread():
-    while True:
-        with lock:
-            runtime.tick()
-        time.sleep(0.01)
-
-def writer_thread():
-    while True:
-        with lock:
-            inputs["button"] = read_button()
-        time.sleep(0.001)
-
-threading.Thread(target=tick_thread, daemon=True).start()
-threading.Thread(target=writer_thread, daemon=True).start()
-```
-
-### Asyncio (tick as a coroutine)
-
-Run `tick()` inside an asyncio task; update inputs from other coroutines — the event loop serialises them.
-
-```python
-import asyncio
-
-async def tick_loop():
-    while True:
-        runtime.tick()
-        await asyncio.sleep(0.01)
-
-async def button_task():
-    while True:
-        await wait_for_button()
-        inputs["button"] = True  # picked up on next tick_loop iteration
-
-async def main():
-    await asyncio.gather(tick_loop(), button_task())
-
-asyncio.run(main())
-```
+Common commands: `a`, `b`, `status`, `freq <hz>`, `timeout <ms>`, `help`, `quit`
 
 ## Specs
 

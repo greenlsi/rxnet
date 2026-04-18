@@ -1,25 +1,39 @@
-"""FSM 04-mix — cyclic executive with hyperperiod dispatch table.
+"""FSM 04-mix — BSP thread-per-node executor.
 
-All three machines share a single runtime; periods are registered
-per-machine::
+Same scenario as ``main.py`` but driven by ``ThreadExecutive``.
 
-    light_a  10 ms
-    blink_b  10 ms
-    auto_c   20 ms
-    cli_node 10 ms
+``ThreadExecutive`` gives each node its own ``threading.Thread``.  Three
+``threading.Barrier`` objects per hyperperiod slot enforce the
+reactive-synchronous guarantee:
 
-The runtime builds the hyperperiod table:
-    base  = GCD(10, 10, 20, 10) = 10 ms
-    hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
+- **latch_b[s]**: all active nodes arrive → global latch
+  (``ctx.latch_inputs()``) → each node runs ``latch_inputs`` +
+  ``evaluate`` in parallel.
+- **commit_b[s]**: all active nodes arrive → each node runs ``commit``
+  in parallel.
+- **dump_b[s]**: all active nodes arrive → deferred actions dispatch →
+  each node runs ``dump_outputs`` in parallel.
 
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nodes scheduled for that slot.
+All four nodes (light_a 10 ms, blink_b 10 ms, auto_c 20 ms, cli 10 ms)
+are in a single runtime.  The hyperperiod table (base=10 ms, 2 slots)
+determines which nodes participate in each slot barrier:
+
+  slot 0 (t = 0, 20, 40, …): light_a + blink_b + auto_c + cli  barrier(4)
+  slot 1 (t = 10, 30, 50, …): light_a + blink_b + cli           barrier(3)
+
+The **cli node is added last** and runs in the main thread (stdin access).
+All other nodes get background daemon threads.
+
+.. note::
+    Python's GIL means threads do not achieve true CPU parallelism for
+    pure Python logic, but the BSP barrier model is preserved and
+    I/O-bound phases (GPIO reads, hardware writes) benefit from
+    concurrent scheduling.
 
 Usage::
 
     cd python
-    uv run examples/fsm/04-mix/main.py
+    uv run examples/fsm/04-mix/main_threads.py
 """
 from __future__ import annotations
 
@@ -33,7 +47,7 @@ sys.path.insert(0, str(Path(examples_root) / "fsm" / "01-light"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "02-auto"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "03-blink"))
 
-from rxnet.cyclic import CyclicExecutive
+from rxnet.thread import ThreadExecutive
 from rxnet.fsm import Machine, Runtime
 from rxnet.runtime import Context
 
@@ -63,12 +77,8 @@ SLOW_PERIOD_US = 20_000
 CLI_PERIOD_US  = 10_000
 
 
-# ------------------------------------------------------------------ #
-# CLI node wrapper                                                     #
-# ------------------------------------------------------------------ #
-
 class CliNode:
-    """Wraps Cli as a Runtime Node.  Dispatches one command per dump phase."""
+    """Wraps Cli as a Runtime Node.  Added last → runs in main thread."""
 
     def __init__(self, cli: Cli) -> None:
         self._cli = cli
@@ -85,10 +95,6 @@ class CliNode:
     def dump_outputs(self, ctx: Context) -> None:
         self._cli.tick()
 
-
-# ------------------------------------------------------------------ #
-# CLI command handlers                                                 #
-# ------------------------------------------------------------------ #
 
 def _light_state(state: int) -> str:
     return "ON" if state == LIGHT_STATE_ON else "OFF"
@@ -183,10 +189,6 @@ def cmd_quit(line: str, user: object) -> None:
     sys.exit(0)
 
 
-# ------------------------------------------------------------------ #
-# Main                                                                 #
-# ------------------------------------------------------------------ #
-
 def main() -> None:
     light_a = create_light_fsm(BUTTON_A_GPIO, LIGHT_A_GPIO)
     blink_b = create_blink_fsm(BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ)
@@ -210,8 +212,7 @@ def main() -> None:
 
     cli_node = CliNode(cli)
 
-    # All nodes in a single runtime — periods registered per-node.
-    # The runtime builds the hyperperiod table (base=10 ms, 2 slots).
+    # cli_node added last → ThreadExecutive runs it in the main thread.
     rt = Runtime()
     rt.add_machine(light_a,  FAST_PERIOD_US)
     rt.add_machine(blink_b,  FAST_PERIOD_US)
@@ -222,9 +223,9 @@ def main() -> None:
     cmd_status("status", machines)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
-    ce.add(rt)
-    ce.run()  # never returns
+    te = ThreadExecutive()
+    te.add(rt)
+    te.run()  # never returns — cli_node runs in this (main) thread
 
 
 if __name__ == "__main__":

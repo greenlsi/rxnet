@@ -75,8 +75,23 @@ class Runtime:
     def machines(self) -> Sequence[Machine]:
         return [node for node in self._core.nodes if isinstance(node, Machine)]
 
-    def add_machine(self, machine: Machine) -> None:
-        self._core.add_node(machine)
+    def add_machine(self, machine: Machine, period_us: int = 0) -> None:
+        self._core.add_node(machine, period_us)
+
+    def add_node(self, node: Any, period_us: int = 0) -> None:
+        """Register a non-Machine node (e.g. a CliNode wrapper)."""
+        self._core.add_node(node, period_us)
+
+    def build(self) -> None:
+        self._core.build()
+
+    @property
+    def period_us(self) -> int:
+        return self._core.period_us
+
+    @property
+    def nslots(self) -> int:
+        return self._core.nslots
 
     def tick(self) -> None:
         self._core.tick()

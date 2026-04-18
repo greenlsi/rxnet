@@ -1,25 +1,24 @@
-"""PN 04-mix — cyclic executive with hyperperiod dispatch table.
+"""PN 04-mix — cooperative multi-rate scheduler.
 
-All three nets share a single runtime; periods are registered
-per-net::
+Same scenario as ``main.py`` but driven by ``CoopExecutive``.
 
-    light_a  10 ms
-    blink_b  10 ms
-    auto_c   20 ms
-    cli_node 10 ms
+``CoopExecutive`` differs from ``CyclicExecutive``:
 
-The runtime builds the hyperperiod table:
-    base  = GCD(10, 10, 20, 10) = 10 ms
-    hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
+- **Dynamic dispatch**: runs the runtime when its deadline passes rather
+  than advancing a fixed slot table.
+- **Overrun-tolerant**: deadline advances by one period regardless of
+  actual execution time, preventing accumulated phase slippage.
+- **Multi-runtime**: can drive several independent runtimes (useful when
+  PN and FSM nodes cannot share a runtime).
 
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nets scheduled for that slot.
+All four nodes (light_a 10 ms, blink_b 10 ms, auto_c 20 ms, cli 10 ms)
+are in a single runtime; ``CoopExecutive`` drives it at the base period
+(10 ms).
 
 Usage::
 
     cd python
-    uv run examples/pn/04-mix/main.py
+    uv run examples/pn/04-mix/main_coop.py
 """
 from __future__ import annotations
 
@@ -33,7 +32,7 @@ sys.path.insert(0, str(Path(examples_root) / "pn" / "01-light"))
 sys.path.insert(0, str(Path(examples_root) / "pn" / "02-auto"))
 sys.path.insert(0, str(Path(examples_root) / "pn" / "03-blink"))
 
-from rxnet.cyclic import CyclicExecutive
+from rxnet.coop import CoopExecutive
 from rxnet.pn import Net, Runtime as PnRuntime
 from rxnet.runtime import Context
 
@@ -56,13 +55,7 @@ SLOW_PERIOD_US = 20_000
 CLI_PERIOD_US  = 10_000
 
 
-# ------------------------------------------------------------------ #
-# CLI node wrapper                                                     #
-# ------------------------------------------------------------------ #
-
 class CliNode:
-    """Wraps Cli as a Runtime Node.  Dispatches one command per dump phase."""
-
     def __init__(self, cli: Cli) -> None:
         self._cli = cli
 
@@ -78,10 +71,6 @@ class CliNode:
     def dump_outputs(self, ctx: Context) -> None:
         self._cli.tick()
 
-
-# ------------------------------------------------------------------ #
-# CLI command handlers                                                 #
-# ------------------------------------------------------------------ #
 
 def _light_state(net: Net, p_on: int) -> str:
     return "ON" if net.places[p_on] > 0 else "OFF"
@@ -176,10 +165,6 @@ def cmd_quit(line: str, user: object) -> None:
     sys.exit(0)
 
 
-# ------------------------------------------------------------------ #
-# Main                                                                 #
-# ------------------------------------------------------------------ #
-
 def main() -> None:
     light_a = create_light_pn(BUTTON_A_GPIO, LIGHT_A_GPIO)
     blink_b = create_blink_pn(BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ)
@@ -203,8 +188,6 @@ def main() -> None:
 
     cli_node = CliNode(cli)
 
-    # All nodes in a single runtime — periods registered per-node.
-    # The runtime builds the hyperperiod table (base=10 ms, 2 slots).
     rt = PnRuntime()
     rt.add_net(light_a,  FAST_PERIOD_US)
     rt.add_net(blink_b,  FAST_PERIOD_US)
@@ -215,7 +198,7 @@ def main() -> None:
     cmd_status("status", nets)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
+    ce = CoopExecutive()
     ce.add(rt)
     ce.run()  # never returns
 
