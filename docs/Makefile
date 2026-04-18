@@ -1,4 +1,4 @@
-pdf: specs-c.pdf specs-python.pdf user.pdf
+pdf: specs-c.pdf specs-python.pdf user-python.pdf user-c.pdf
 
 PANDOC_FLAGS = \
 	--from markdown \
@@ -30,9 +30,17 @@ specs-python.pdf: specs-python.md specs/python/requirements.md specs/python/desi
 	@echo "Generating $@..."
 	@pandoc $^ -o $@ $(PANDOC_FLAGS)
 
-user.pdf: user.md
+user-python.pdf: user-intro.md user-python.md
 	@echo "Generating $@..."
-	@pandoc $^ -o $@ $(PANDOC_FLAGS)
+	@pandoc $^ -o $@ $(PANDOC_FLAGS) \
+		-M title="rxnet — Guía de usuario: Python" \
+		-M subtitle="FSM y Redes de Petri sobre un runtime síncrono reactivo"
+
+user-c.pdf: user-intro.md user-c.md
+	@echo "Generating $@..."
+	@pandoc $^ -o $@ $(PANDOC_FLAGS) \
+		-M title="rxnet — Guía de usuario: C" \
+		-M subtitle="FSM y Redes de Petri sobre un runtime síncrono reactivo"
 
 clean:
-	rm -f specs-c.pdf specs-python.pdf user.pdf
+	rm -f specs-c.pdf specs-python.pdf user-python.pdf user-c.pdf

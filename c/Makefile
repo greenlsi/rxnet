@@ -7,23 +7,23 @@ LIB          := $(BUILD_DIR)/librxnet.a
 LIB_OBJS     := $(BUILD_DIR)/runtime.o $(BUILD_DIR)/fsm.o $(BUILD_DIR)/pn.o \
                 $(BUILD_DIR)/cyclic.o $(BUILD_DIR)/coop.o $(BUILD_DIR)/thread.o
 
-FSM_00_LIGHT_BIN := $(BUILD_DIR)/fsm_00_light
-FSM_01_AUTO_BIN  := $(BUILD_DIR)/fsm_01_auto
-FSM_02_BLINK_BIN := $(BUILD_DIR)/fsm_02_blink
-FSM_03_MIX_BIN        := $(BUILD_DIR)/fsm_03_mix
-FSM_03_MIX_THREADS_BIN := $(BUILD_DIR)/fsm_03_mix_threads
-FSM_03_MIX_COOP_BIN    := $(BUILD_DIR)/fsm_03_mix_coop
-PN_00_LIGHT_BIN  := $(BUILD_DIR)/pn_00_light
-PN_01_AUTO_BIN   := $(BUILD_DIR)/pn_01_auto
-PN_02_BLINK_BIN  := $(BUILD_DIR)/pn_02_blink
-PN_03_MIX_BIN         := $(BUILD_DIR)/pn_03_mix
-PN_03_MIX_THREADS_BIN := $(BUILD_DIR)/pn_03_mix_threads
-PN_03_MIX_COOP_BIN    := $(BUILD_DIR)/pn_03_mix_coop
+FSM_01_LIGHT_BIN := $(BUILD_DIR)/fsm_01_light
+FSM_02_AUTO_BIN  := $(BUILD_DIR)/fsm_02_auto
+FSM_03_BLINK_BIN := $(BUILD_DIR)/fsm_03_blink
+FSM_04_MIX_BIN        := $(BUILD_DIR)/fsm_04_mix_cyclic
+FSM_04_MIX_THREADS_BIN := $(BUILD_DIR)/fsm_04_mix_threads
+FSM_04_MIX_COOP_BIN    := $(BUILD_DIR)/fsm_04_mix_coop
+PN_01_LIGHT_BIN  := $(BUILD_DIR)/pn_01_light
+PN_02_AUTO_BIN   := $(BUILD_DIR)/pn_02_auto
+PN_03_BLINK_BIN  := $(BUILD_DIR)/pn_03_blink
+PN_04_MIX_BIN         := $(BUILD_DIR)/pn_04_mix_cyclic
+PN_04_MIX_THREADS_BIN := $(BUILD_DIR)/pn_04_mix_threads
+PN_04_MIX_COOP_BIN    := $(BUILD_DIR)/pn_04_mix_coop
 MIXED_BIN        := $(BUILD_DIR)/mixed
 
 # Shared sources reused by all PN CLI examples
-PN_CLI_SHARED := examples/fsm/00-light/app_driver.c examples/fsm/00-light/cli_fsm.c
-PN_CLI_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/00-light
+PN_CLI_SHARED := examples/fsm/01-light/app_driver.c examples/fsm/01-light/cli_fsm.c
+PN_CLI_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/01-light
 
 TEST_RUNTIME_BIN  := $(BUILD_DIR)/test_runtime
 TEST_FSM_BIN      := $(BUILD_DIR)/test_fsm
@@ -71,106 +71,106 @@ $(BUILD_DIR):
 # Examples                                                             #
 # ------------------------------------------------------------------ #
 
-examples: light_cli auto_cli blink_cli mix_cli mix_threads mix_coop \
-          pn_00_light pn_01_auto pn_02_blink pn_03_mix pn_03_mix_threads pn_03_mix_coop \
+examples: fsm_01_light fsm_02_auto fsm_03_blink fsm_04_mix_cyclic fsm_04_mix_threads fsm_04_mix_coop \
+          pn_01_light pn_02_auto pn_03_blink pn_04_mix pn_04_mix_threads pn_04_mix_coop \
           mixed
 
-light_cli: $(FSM_00_LIGHT_BIN)
+fsm_01_light: $(FSM_01_LIGHT_BIN)
 
-$(FSM_00_LIGHT_BIN): $(LIB) examples/fsm/00-light/app_driver.c examples/fsm/00-light/light_fsm.c examples/fsm/00-light/cli_fsm.c examples/fsm/00-light/main_cli.c | $(BUILD_DIR)
+$(FSM_01_LIGHT_BIN): $(LIB) examples/fsm/01-light/app_driver.c examples/fsm/01-light/light_fsm.c examples/fsm/01-light/cli_fsm.c examples/fsm/01-light/main_cli.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
 
-auto_cli: $(FSM_01_AUTO_BIN)
+fsm_02_auto: $(FSM_02_AUTO_BIN)
 
-$(FSM_01_AUTO_BIN): $(LIB) examples/fsm/01-auto/app_driver.c examples/fsm/01-auto/auto_fsm.c examples/fsm/01-auto/cli_fsm.c examples/fsm/01-auto/main_cli.c | $(BUILD_DIR)
+$(FSM_02_AUTO_BIN): $(LIB) examples/fsm/02-auto/app_driver.c examples/fsm/02-auto/auto_fsm.c examples/fsm/02-auto/cli_fsm.c examples/fsm/02-auto/main_cli.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
 
-blink_cli: $(FSM_02_BLINK_BIN)
+fsm_03_blink: $(FSM_03_BLINK_BIN)
 
-$(FSM_02_BLINK_BIN): $(LIB) examples/fsm/02-blink/app_driver.c examples/fsm/02-blink/blink_fsm.c examples/fsm/02-blink/cli_fsm.c examples/fsm/02-blink/main_cli.c | $(BUILD_DIR)
+$(FSM_03_BLINK_BIN): $(LIB) examples/fsm/03-blink/app_driver.c examples/fsm/03-blink/blink_fsm.c examples/fsm/03-blink/cli_fsm.c examples/fsm/03-blink/main_cli.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
 
-mix_cli: $(FSM_03_MIX_BIN)
+fsm_04_mix_cyclic: $(FSM_04_MIX_BIN)
 
-$(FSM_03_MIX_BIN): $(LIB) examples/fsm/03-mix/app_driver.c examples/fsm/03-mix/light_fsm.c examples/fsm/03-mix/blink_fsm.c examples/fsm/03-mix/auto_fsm.c examples/fsm/03-mix/cli_fsm.c examples/fsm/03-mix/main_cli.c | $(BUILD_DIR)
+$(FSM_04_MIX_BIN): $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_cli.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
 
-MIX_SHARED := $(LIB) examples/fsm/03-mix/app_driver.c examples/fsm/03-mix/light_fsm.c examples/fsm/03-mix/blink_fsm.c examples/fsm/03-mix/auto_fsm.c examples/fsm/03-mix/cli_fsm.c
-MIX_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/03-mix
+MIX_SHARED := $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c
+MIX_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/04-mix
 
-mix_threads: $(FSM_03_MIX_THREADS_BIN)
+fsm_04_mix_threads: $(FSM_04_MIX_THREADS_BIN)
 
-$(FSM_03_MIX_THREADS_BIN): $(MIX_SHARED) examples/fsm/03-mix/main_threads.c | $(BUILD_DIR)
+$(FSM_04_MIX_THREADS_BIN): $(MIX_SHARED) examples/fsm/04-mix/main_threads.c | $(BUILD_DIR)
 	$(CC) $(MIX_FLAGS) $^ -o $@ -lpthread
 
-mix_coop: $(FSM_03_MIX_COOP_BIN)
+fsm_04_mix_coop: $(FSM_04_MIX_COOP_BIN)
 
-$(FSM_03_MIX_COOP_BIN): $(MIX_SHARED) examples/fsm/03-mix/main_coop.c | $(BUILD_DIR)
+$(FSM_04_MIX_COOP_BIN): $(MIX_SHARED) examples/fsm/04-mix/main_coop.c | $(BUILD_DIR)
 	$(CC) $(MIX_FLAGS) $^ -o $@
 
 
 PN_MIX_SHARED := $(LIB) $(PN_CLI_SHARED) \
-    examples/pn/00-light/light_pn.c \
-    examples/pn/01-auto/auto_pn.c \
-    examples/pn/02-blink/blink_pn.c
+    examples/pn/01-light/light_pn.c \
+    examples/pn/02-auto/auto_pn.c \
+    examples/pn/03-blink/blink_pn.c
 PN_MIX_FLAGS  := $(PN_CLI_FLAGS) \
-    -Iexamples/pn/00-light \
-    -Iexamples/pn/01-auto \
-    -Iexamples/pn/02-blink
+    -Iexamples/pn/01-light \
+    -Iexamples/pn/02-auto \
+    -Iexamples/pn/03-blink
 
-pn_03_mix_threads: $(PN_03_MIX_THREADS_BIN)
+pn_04_mix_threads: $(PN_04_MIX_THREADS_BIN)
 
-$(PN_03_MIX_THREADS_BIN): $(PN_MIX_SHARED) examples/pn/03-mix/main_threads.c | $(BUILD_DIR)
+$(PN_04_MIX_THREADS_BIN): $(PN_MIX_SHARED) examples/pn/04-mix/main_threads.c | $(BUILD_DIR)
 	$(CC) $(PN_MIX_FLAGS) $^ -o $@ -lpthread
 
-pn_03_mix_coop: $(PN_03_MIX_COOP_BIN)
+pn_04_mix_coop: $(PN_04_MIX_COOP_BIN)
 
-$(PN_03_MIX_COOP_BIN): $(PN_MIX_SHARED) examples/pn/03-mix/main_coop.c | $(BUILD_DIR)
+$(PN_04_MIX_COOP_BIN): $(PN_MIX_SHARED) examples/pn/04-mix/main_coop.c | $(BUILD_DIR)
 	$(CC) $(PN_MIX_FLAGS) $^ -o $@
 
-pn_00_light: $(PN_00_LIGHT_BIN)
+pn_01_light: $(PN_01_LIGHT_BIN)
 
-$(PN_00_LIGHT_BIN): $(LIB) $(PN_CLI_SHARED) \
-    examples/pn/00-light/light_pn.c \
-    examples/pn/00-light/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/00-light $^ -o $@
+$(PN_01_LIGHT_BIN): $(LIB) $(PN_CLI_SHARED) \
+    examples/pn/01-light/light_pn.c \
+    examples/pn/01-light/main_cli.c | $(BUILD_DIR)
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/01-light $^ -o $@
 
-pn_01_auto: $(PN_01_AUTO_BIN)
+pn_02_auto: $(PN_02_AUTO_BIN)
 
-$(PN_01_AUTO_BIN): $(LIB) $(PN_CLI_SHARED) \
-    examples/pn/01-auto/auto_pn.c \
-    examples/pn/01-auto/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/01-auto $^ -o $@
+$(PN_02_AUTO_BIN): $(LIB) $(PN_CLI_SHARED) \
+    examples/pn/02-auto/auto_pn.c \
+    examples/pn/02-auto/main_cli.c | $(BUILD_DIR)
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/02-auto $^ -o $@
 
-pn_02_blink: $(PN_02_BLINK_BIN)
+pn_03_blink: $(PN_03_BLINK_BIN)
 
-$(PN_02_BLINK_BIN): $(LIB) $(PN_CLI_SHARED) \
-    examples/pn/02-blink/blink_pn.c \
-    examples/pn/02-blink/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/02-blink $^ -o $@
+$(PN_03_BLINK_BIN): $(LIB) $(PN_CLI_SHARED) \
+    examples/pn/03-blink/blink_pn.c \
+    examples/pn/03-blink/main_cli.c | $(BUILD_DIR)
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/03-blink $^ -o $@
 
-pn_03_mix: $(PN_03_MIX_BIN)
+pn_04_mix: $(PN_04_MIX_BIN)
 
-$(PN_03_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
-    examples/pn/00-light/light_pn.c \
-    examples/pn/01-auto/auto_pn.c \
-    examples/pn/02-blink/blink_pn.c \
-    examples/pn/03-mix/main_cli.c | $(BUILD_DIR)
+$(PN_04_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
+    examples/pn/01-light/light_pn.c \
+    examples/pn/02-auto/auto_pn.c \
+    examples/pn/03-blink/blink_pn.c \
+    examples/pn/04-mix/main_cli.c | $(BUILD_DIR)
 	$(CC) $(PN_CLI_FLAGS) \
-	    -Iexamples/pn/00-light \
-	    -Iexamples/pn/01-auto \
-	    -Iexamples/pn/02-blink \
+	    -Iexamples/pn/01-light \
+	    -Iexamples/pn/02-auto \
+	    -Iexamples/pn/03-blink \
 	    $^ -o $@
 
 mixed: $(MIXED_BIN)
 
 $(MIXED_BIN): $(LIB) $(PN_CLI_SHARED) \
-    examples/fsm/00-light/light_fsm.c \
-    examples/pn/00-light/light_pn.c \
+    examples/fsm/01-light/light_fsm.c \
+    examples/pn/01-light/light_pn.c \
     examples/mixed/main_cli.c | $(BUILD_DIR)
 	$(CC) $(PN_CLI_FLAGS) \
-	    -Iexamples/fsm/00-light \
-	    -Iexamples/pn/00-light \
+	    -Iexamples/fsm/01-light \
+	    -Iexamples/pn/01-light \
 	    $^ -o $@
 
 # ------------------------------------------------------------------ #

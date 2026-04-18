@@ -1,2 +1,4 @@
 __pycache__
 mermaid-filter.err
+.DS_Store
+c/build

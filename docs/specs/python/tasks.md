@@ -51,7 +51,7 @@ Tasks are marked as completed when they reflect the current repository state, an
     - Shared `app_driver.py` (host-mock GPIO) + `cli.py` (non-blocking stdin)
     - _Requirements: 9.1, 9.2, 10.3_
   - [x] 4.3 Implement interactive CLI PN examples (01-light, 02-auto, 03-blink, 04-mix)
-    - Equivalent to C `examples/pn/01-light` through `pn/04-mix`
+    - Equivalent to C `examples/pn/00-light` through `pn/03-mix`
     - REQUEST places, AUTO_OFF_DUE signal place, TOGGLE_DUE signal place
     - _Requirements: 9.1, 9.2, 10.3_
 

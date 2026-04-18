@@ -122,23 +122,23 @@ rx_thread_exec_add(&te, &cli_rt.runtime);  /* FSM cli → main thread (last) */
 ### FSM examples
 
 ```bash
-make light_cli && ./build/fsm_00_light        # on/off toggle
-make auto_cli  && ./build/fsm_01_auto         # auto-off timer
-make blink_cli && ./build/fsm_02_blink        # blink with speed control
-make mix_cli   && ./build/fsm_03_mix          # cyclic executive
-make mix_coop  && ./build/fsm_03_mix_coop     # cooperative scheduler
-make mix_threads && ./build/fsm_03_mix_threads  # parallel threads
+make fsm_01_light       && ./build/fsm_01_light        # on/off toggle
+make fsm_02_auto        && ./build/fsm_02_auto         # auto-off timer
+make fsm_03_blink       && ./build/fsm_03_blink        # blink with speed control
+make fsm_04_mix_cyclic  && ./build/fsm_04_mix_cyclic   # cyclic executive
+make fsm_04_mix_coop    && ./build/fsm_04_mix_coop     # cooperative scheduler
+make fsm_04_mix_threads && ./build/fsm_04_mix_threads  # parallel threads
 ```
 
 ### Petri Net examples
 
 ```bash
-make pn_00_light && ./build/pn_00_light            # on/off toggle (PN)
-make pn_01_auto  && ./build/pn_01_auto             # auto-off (PN)
-make pn_02_blink && ./build/pn_02_blink            # blink with speed levels (PN)
-make pn_03_mix   && ./build/pn_03_mix              # cyclic executive
-make pn_03_mix_coop && ./build/pn_03_mix_coop      # cooperative scheduler
-make pn_03_mix_threads && ./build/pn_03_mix_threads  # parallel threads
+make pn_01_light       && ./build/pn_01_light          # on/off toggle (PN)
+make pn_02_auto        && ./build/pn_02_auto           # auto-off (PN)
+make pn_03_blink       && ./build/pn_03_blink          # blink with speed levels (PN)
+make pn_04_mix_cyclic  && ./build/pn_04_mix_cyclic     # cyclic executive
+make pn_04_mix_coop    && ./build/pn_04_mix_coop       # cooperative scheduler
+make pn_04_mix_threads && ./build/pn_04_mix_threads    # parallel threads
 ```
 
 ### Mixed FSM + PN in one runtime

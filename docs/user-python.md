@@ -1,64 +1,22 @@
 ---
-title: "rxnet — Guía de usuario"
-subtitle: "FSM y Redes de Petri sobre un runtime síncrono reactivo"
----
-
-# rxnet — Guía de usuario
-
-## 1. El problema que resuelve rxnet
-
-Los sistemas reactivos responden a eventos del entorno: pulsaciones de botón,
-lecturas de sensor, mensajes de red, expiración de temporizadores. El reto no
-es *qué hacer* ante un evento, sino *cuándo hacerlo* y *qué hay que ver* en ese
-momento.
-
-Sin disciplina, el código reactivo acumula dos tipos de bugs difíciles de
-reproducir:
-
-* **Race conditions de lectura**: el guard de una transición lee un bit de
-  hardware a mitad de ciclo, cuando otro módulo ya lo consumió.
-* **Efectos secundarios prematuros**: una acción ejecutada durante la evaluación
-  modifica estado que otro módulo todavía no evaluó.
-
-rxnet impone una disciplina que los elimina por construcción: **toda la
-información que entra en el sistema se lee exactamente una vez por ciclo, al
-principio, y todos los efectos secundarios se ejecutan exactamente una vez,
-al final**.
-
----
-
-## 2. La hipótesis síncrona
-
-rxnet está inspirada en los *lenguajes síncronos* (Esterel, Lustre, Signal) y
-en sus derivados industriales (SCADE, Simulink). La idea central se llama la
-**hipótesis síncrona**:
-
-> La computación de un tick es instantánea. El mundo externo no cambia mientras
-> el sistema está procesando.
-
-Esto es una abstracción, no una afirmación física. En la práctica significa:
-
-* El tick debe completarse antes de que llegue el siguiente evento significativo.
-* Si el tick tarda más que el período de muestreo, el sistema tiene un problema
-  de diseño, no de concurrencia.
-
-Bajo la hipótesis síncrona, **no hay carrera de datos posible dentro del tick**:
-todos los módulos leen el mismo snapshot de entradas, y nadie ve los cambios de
-los demás hasta el siguiente tick.
-
----
 
 ## 3. El tick y sus fases
 
-Cada llamada a `runtime.tick()` ejecuta seis fases en orden estricto:
+Cada llamada a `runtime.tick()` ejecuta cinco fases en orden estricto:
 
-| # | Fase | Qué hace cada nodo |
+| # | Fase | Qué hace |
 |---|---|---|
-| 1 | **Latch inputs** | `latch_inputs_cb()` — leer GPIO, calcular señales derivadas, tomar snapshot |
+| 1 | **Latch inputs** | `latch_inputs_cb(ctx, user)` — leer GPIO, calcular señales derivadas, tomar snapshot |
 | 2 | **Evaluate** | `evaluate()` — decidir siguiente estado / flags (solo lectura del snapshot) |
 | 3 | **Commit** | `commit()` — aplicar decisiones, encolar acciones diferidas |
 | 4 | **Deferred** | ejecutar cola de acciones — timers, side-effects, notificaciones |
-| 5 | **Dump outputs** | `dump_outputs_cb()` — escribir GPIO, imprimir estado |
+| 5 | **Dump** | `dump_outputs_cb(ctx, user)` — escribir GPIO, imprimir estado |
+
+**Sub-paso exclusivo de Python**: antes de llamar a los callbacks por nodo,
+el runtime ejecuta `context.latch_inputs()`, que copia `ctx.inputs`
+(dict de entradas en vivo, modificable desde cualquier hilo) a
+`ctx.latched_inputs` (snapshot de solo lectura para este tick). Esto permite
+compartir señales globales entre nodos sin riesgo de carrera.
 
 ### Por qué esa separación de fases
 
@@ -118,7 +76,7 @@ machine = Machine(
     state=IDLE,
     transitions=transitions,
     user=my_data,              # datos de usuario, pasados a guard/action
-    latch_inputs_cb=read_gpio, # llamada en fase 2
+    latch_inputs_cb=read_gpio, # llamada en fase 2 (latch por nodo)
     dump_outputs_cb=write_gpio,# llamada en fase 6
 )
 
@@ -423,20 +381,19 @@ rt.add_machine(actuator_machine)  # tarea 3: ve el estado de las anteriores
 ```
 
 **Ventajas del ejecutivo cíclico**:
+
 - Determinista: mismo orden en cada ciclo
 - Sin overhead de scheduler
 - Sin posibilidad de deadlock o starvation
 - Fácil de analizar temporalmente: si cada tarea tarda ≤ T, el ciclo tarda ≤ N×T
 
 **Limitaciones**:
+
 - Todas las tareas comparten el mismo período
 - Una tarea lenta retrasa todas las demás
 - No hay forma de responder a eventos urgentes a mitad de ciclo
 
 #### Ajuste fino: múltiples runtimes a distintas velocidades
-
-Para tareas con períodos diferentes, se pueden usar múltiples runtimes con
-bucles independientes, o ejecutar algunos nodos con división de frecuencia:
 
 ```python
 tick_count = 0
@@ -473,10 +430,6 @@ como distribución de tokens en la PN.
 
 **Ejemplo: tarea que procesa una cola de mensajes, uno por tick**
 
-La máquina arranca en `IDLE`. Al detectar un mensaje transiciona a `PROCESANDO`
-(un tick = un paso). Si el proceso termina bien vuelve a `IDLE`;
-si hay error va a `ERROR_HANDLER`.
-
 ```python
 IDLE         = 0
 PROCESANDO   = 1
@@ -492,11 +445,11 @@ def latch(ctx, d: WorkerData):
     d.current_msg = d.queue.pop(0) if d.queue else None
 
 def has_message(ctx, d): return d.current_msg is not None
-def is_processed(ctx, d): return True  # en este tick simple, siempre termina
+def is_processed(ctx, d): return True
 def has_error(ctx, d): return d.current_msg and d.current_msg.is_invalid()
 
 def process(ctx, d):
-    do_work(d.current_msg)  # acción deferred: todos los módulos ya commitaron
+    do_work(d.current_msg)
 
 machine = Machine(
     name="worker",
@@ -516,25 +469,24 @@ machine = Machine(
 Las tareas se comunican a través de:
 
 1. **Lugares de PN (tokens como mensajes)**:
+
 ```python
-# El productor añade un token en P_BUFFER cuando tiene datos
-# El consumidor consume ese token cuando está listo
-P_BUFFER = 2
+# El productor añade un token cuando tiene datos
 net.places[P_BUFFER] += 1  # en latch_inputs_cb del productor
 ```
 
 2. **Estado de FSM como señal de coordinación**:
+
 ```python
-# Tarea B puede leer el estado de tarea A en sus guards
 def a_is_ready(ctx, d):
-    return task_a_machine.state == READY  # acceso directo al estado
+    return task_a_machine.state == READY
 ```
 
 3. **Context inputs (datos globales del tick)**:
+
 ```python
-# En el context global se puede poner un struct de señales
-# compartidas que todas las máquinas leen durante latch
-ctx.latched_inputs.alarm_active = sensor_data.alarm
+ctx.inputs["alarm_active"] = sensor_data.alarm
+# Disponible en ctx.latched_inputs tras la fase 1 (latch global)
 ```
 
 #### Diferencia clave con el ejecutivo cíclico
@@ -552,82 +504,68 @@ ctx.latched_inputs.alarm_active = sensor_data.alarm
 
 En un RTOS (FreeRTOS, Zephyr, ThreadX), las tareas tienen prioridades
 numéricas. El scheduler **desaloja** (preempt) una tarea de baja prioridad
-cuando una de alta prioridad pasa a estar lista para ejecutar, incluso si la
-primera no ha terminado su trabajo.
+cuando una de alta prioridad pasa a estar lista para ejecutar.
 
 | | t1 | t2 | t3 | t4 |
 |---|---|---|---|---|
 | Alta prioridad | — | ejecuta | — | ejecuta |
 | Baja prioridad | ejecuta | *preemptada* | ejecuta | *preemptada* |
 
-#### ¿Puede rxnet modelar esto?
+#### rxnet con hilos del sistema operativo
 
-Directamente, **no**: rxnet es síncrono y cooperativo. Un tick es atómico;
-nada puede interrumpirlo a mitad.
+rxnet puede ejecutarse dentro de un hilo del SO. Cada hilo tiene su propio
+runtime y toca sus propias estructuras; no hace falta sincronización extra
+siempre que un solo hilo llame a `rt.tick()`.
 
-Pero rxnet puede usarse de dos formas en un sistema con hilos preemptivos:
+```python
+import threading
+import time
 
----
+def rxnet_thread(rt, period_s):
+    next_tick = time.monotonic()
+    while True:
+        rt.tick()
+        next_tick += period_s
+        sleep_s = next_tick - time.monotonic()
+        if sleep_s > 0:
+            time.sleep(sleep_s)
 
-**Forma 1: rxnet dentro de una tarea RTOS (lo más común)**
+fast_rt = Runtime()
+fast_rt.add_machine(control_machine)
 
-rxnet corre dentro de una única tarea RTOS. El RTOS gestiona las prioridades
-reales entre tareas del sistema; rxnet gestiona la lógica de la aplicación
-dentro de su tarea.
+slow_rt = Runtime()
+slow_rt.add_machine(monitor_machine)
 
-- RTOS scheduler
-  - Tarea 1 — alta prioridad: IRQ de emergencia
-  - Tarea 2 — media prioridad: **rxnet corre aquí** (`rt.tick()` cada 10 ms)
-    - `sensor_machine`
-    - `control_machine`
-    - `actuator_machine`
-  - Tarea 3 — baja prioridad: logging, comms
+threading.Thread(target=rxnet_thread, args=(fast_rt, 0.001), daemon=True).start()
+threading.Thread(target=rxnet_thread, args=(slow_rt, 0.100), daemon=True).start()
+```
 
-El RTOS garantiza que la tarea rxnet se ejecuta con su prioridad. Dentro de
-esa tarea, el ejecutivo cíclico de rxnet gestiona las sub-tareas sin overhead
-de RTOS.
+#### Modelar prioridades dentro de rxnet (sin hilos)
 
----
-
-**Forma 2: modelar prioridades dentro de rxnet**
-
-Si *todas* las "tareas" son manejadas por rxnet (sin RTOS), se puede modelar
+Si *todas* las "tareas" son manejadas por rxnet, se puede modelar
 comportamiento de prioridades usando las propiedades del modelo:
 
 **a) Prioridad por orden de nodo**
 
 Los nodos registrados antes se evalúan primero. En PN con semántica
-greedy-sequential, las transiciones declaradas antes tienen prioridad sobre
-las declaradas después para el mismo recurso:
+greedy-sequential, las transiciones declaradas antes tienen prioridad:
 
 ```python
 transitions = [
-    # Prioridad alta: esta transición se evalúa primero
-    # Si dispara, consume el token y la de baja prioridad no puede
+    # Prioridad alta: se evalúa primero; si dispara, el token ya no está
     Transition(consume=[Arc(P_CPU, 1)], produce=[Arc(P_TASK_HIGH, 1)],
-               guard=high_prio_ready),     # ← alta prioridad
+               guard=high_prio_ready),
 
     # Prioridad baja: solo dispara si la alta no consumió el token
     Transition(consume=[Arc(P_CPU, 1)], produce=[Arc(P_TASK_LOW, 1)],
-               guard=low_prio_ready),      # ← baja prioridad
+               guard=low_prio_ready),
 ]
 ```
 
 **b) Modelar desalojo con señales**
 
-El "desalojo" se puede modelar como una transición que devuelve el token de
-CPU al pool cuando llega una tarea de mayor prioridad:
-
-**Estado normal:** `P_CPU=1`, `P_LOW_RUNNING=1`
-
-**Llega alta prioridad:**
-`T_PREEMPT`: consume `{P_LOW_RUNNING, P_HIGH_READY}`, produce `{P_HIGH_RUNNING, P_LOW_SUSPENDED}`
-
-**Alta prioridad termina:**
-`T_RESUME`: consume `{P_HIGH_DONE, P_LOW_SUSPENDED}`, produce `{P_LOW_RUNNING}`
-
 ```python
-P_CPU           = 0   # token = CPU libre
+P_CPU           = 0
 P_HIGH_READY    = 1
 P_HIGH_RUNNING  = 2
 P_LOW_READY     = 3
@@ -635,19 +573,14 @@ P_LOW_RUNNING   = 4
 P_LOW_SUSPENDED = 5
 
 transitions = [
-    # Despacho normal de alta prioridad
     Transition(consume=[Arc(P_CPU,1), Arc(P_HIGH_READY,1)],
                produce=[Arc(P_HIGH_RUNNING,1)]),
-
-    # Despacho normal de baja prioridad (solo si no hay alta lista)
     Transition(consume=[Arc(P_CPU,1), Arc(P_LOW_READY,1)],
                produce=[Arc(P_LOW_RUNNING,1)]),
-
     # Preempción: alta prioridad interrumpe a baja
     Transition(consume=[Arc(P_LOW_RUNNING,1), Arc(P_HIGH_READY,1)],
                produce=[Arc(P_LOW_SUSPENDED,1), Arc(P_HIGH_RUNNING,1)]),
-
-    # Reanudación: alta termina, baja retoma CPU
+    # Reanudación: alta termina, baja retoma
     Transition(consume=[Arc(P_HIGH_RUNNING,1), Arc(P_LOW_SUSPENDED,1)],
                produce=[Arc(P_CPU,1), Arc(P_LOW_RUNNING,1)]),
 ]
@@ -655,58 +588,160 @@ transitions = [
 
 **Nota importante**: este modelo describe *cuándo* debe ejecutarse cada tarea,
 pero rxnet no ejecuta código en paralelo real. Para ejecución paralela
-verdadera, se necesita combinar con hilos del SO o del RTOS. rxnet modela la
-**política** de scheduling; el SO implementa el **mecanismo**.
+verdadera se necesita combinar con hilos del SO. rxnet modela la **política**
+de scheduling; el SO implementa el **mecanismo**.
 
----
-
-**Forma 3: múltiples runtimes tick a distintas frecuencias**
-
-Para sistemas con tareas de períodos muy distintos:
+#### Multi-rate: múltiples runtimes a distintas frecuencias
 
 ```python
-# Tarea de alta frecuencia: control (1 ms)
 fast_rt = Runtime()
-fast_rt.add_machine(control_machine)
+fast_rt.add_machine(control_machine)   # 1 ms
 
-# Tarea de baja frecuencia: monitorización (100 ms)
 slow_rt = Runtime()
-slow_rt.add_machine(monitor_machine)
+slow_rt.add_machine(monitor_machine)   # 100 ms
 
 tick_count = 0
 next_tick = time.monotonic()
 
 while True:
-    fast_rt.tick()          # cada 1 ms
+    fast_rt.tick()
     if tick_count % 100 == 0:
-        slow_rt.tick()      # cada 100 ms
-
+        slow_rt.tick()
     tick_count += 1
     next_tick += 0.001
     time.sleep(max(0, next_tick - time.monotonic()))
 ```
 
 Este patrón es equivalente a un ejecutivo cíclico con **trama mayor** (major
-frame) y **tramas menores** (minor frames), el diseño estándar de ejecutivos
-cíclicos en aviación (DO-178C) y automoción (AUTOSAR).
+frame) y **tramas menores** (minor frames), el diseño estándar en aviación
+(DO-178C) y automoción (AUTOSAR).
 
----
+### 6.4 Tick paralelo con ThreadPoolExecutor
 
-### 6.4 Resumen comparativo
+Para sistemas con muchos nodos independientes (sin dependencias de datos entre
+ellos en el mismo tick), el runtime puede ejecutar cada fase en paralelo usando
+un `ThreadPoolExecutor` estándar de Python.
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+from rxnet.runtime import Runtime
+
+with ThreadPoolExecutor(max_workers=4) as executor:
+    rt = Runtime(executor=executor)
+    rt.add_node(sensor_machine)
+    rt.add_node(control_machine)
+    rt.add_node(actuator_net)
+
+    while running:
+        rt.tick()   # cada fase se ejecuta en paralelo; barriers entre fases
+        time.sleep(0.010)
+```
+
+**Garantías de orden preservadas**: aunque los nodos se ejecuten en paralelo
+*dentro* de una fase, las barreras entre fases son estrictas:
+
+```
+todos los latch     → barrera → todos los evaluate
+todos los evaluate  → barrera → todos los commit
+todos los commit    → barrera → deferred → todos los dump
+```
+
+Un nodo en evaluate nunca puede empezar antes de que todos los latch hayan
+terminado. La hipótesis síncrona se mantiene.
+
+**Cuándo vale la pena**:
+
+- Muchos nodos con procesamiento costoso (señales analógicas, filtros)
+- Nodos genuinamente independientes: no leen el estado encomendado del otro
+  durante evaluate
+
+**Cuándo no usarlo**:
+
+- Nodos que se coordinan vía `machine.state` o `net.places[]` durante evaluate
+  (hay dependencia dentro del tick → orden secuencial necesario)
+- Pocos nodos ligeros: el overhead de scheduling supera el beneficio
+
+### 6.5 Acciones diferidas asíncronas (WorkerPool)
+
+Por defecto, la fase deferred ejecuta todas las acciones encoladas de forma
+síncrona antes de continuar con dump. Esto es correcto para acciones rápidas.
+
+Para acciones de larga duración (peticiones HTTP, acceso a disco, cálculos
+intensivos) que no deben bloquear el tick, rxnet ofrece un `WorkerPool`:
+
+```python
+from rxnet.worker_pool import Priority, WorkerPool
+from rxnet.runtime import Runtime
+
+pool = WorkerPool(num_workers=4)
+rt = Runtime(worker_pool=pool)
+rt.add_node(my_node)
+
+# tick() retorna inmediatamente; las acciones lentas corren en el pool
+rt.tick()
+
+pool.shutdown(wait=True)
+```
+
+Con un `WorkerPool` activo, `tick()` **no bloquea** en la fase deferred:
+publica las acciones al pool y pasa directamente a dump. Los resultados de
+las acciones llegan a `ctx.inputs` en el siguiente latch.
+
+#### Prioridades en la cola de deferred
+
+Tanto en modo síncrono como asíncrono, las acciones encoladas pueden tener
+prioridad explícita:
+
+```python
+from rxnet.worker_pool import Priority
+
+ctx.enqueue_deferred_action(send_alarm,   user, Priority.CRITICAL)
+ctx.enqueue_deferred_action(log_event,    user, Priority.NORMAL)
+ctx.enqueue_deferred_action(update_stats, user, Priority.LOW)
+```
+
+| Nivel | Valor | Uso típico |
+|---|---|---|
+| `CRITICAL` | 3 | Alarmas, paradas de emergencia |
+| `HIGH` | 2 | Control en tiempo real |
+| `NORMAL` | 1 | Lógica de aplicación (defecto) |
+| `LOW` | 0 | Telemetría, logging, estadísticas |
+
+En modo síncrono, las acciones se ordenan por prioridad antes de ejecutarse
+(FIFO dentro del mismo nivel). En modo asíncrono, el pool mantiene la misma
+semántica de prioridad entre workers.
+
+#### API del WorkerPool
+
+```python
+from rxnet.worker_pool import Priority, WorkerPool
+
+# Crear pool (usar como context manager)
+with WorkerPool(num_workers=4) as pool:
+    rt = Runtime(worker_pool=pool)
+    ...
+
+# O con ciclo de vida explícito
+pool = WorkerPool(num_workers=2)
+pool.submit(my_fn, ctx, user, Priority.HIGH)
+pool.shutdown(wait=True)   # drena la cola y espera a los workers
+```
+
+### 6.6 Resumen comparativo
 
 | Modelo | rxnet cómo lo implementa | Limitación |
 |---|---|---|
 | **Ejecutivo cíclico** | `rt.tick()` en bucle con `sleep` | Todas las tareas al mismo período |
-| **Multitarea cooperativa** | Estado en FSM/PN, comunicación por tokens o señales | Sin preempción real |
-| **Prioridad por policy** | Orden de nodos + greedy-sequential PN | Solo modela la política, no el mecanismo |
-| **Hilos preemptivos** | rxnet dentro de una tarea RTOS | El SO gestiona la preempción real |
-| **Multi-rate** | Múltiples runtimes a distintas frecuencias | Mayor/minor frames manuales |
+| **Multitarea cooperativa** | Estado en FSM/PN, tokens como mensajes | Sin preempción real |
+| **Prioridad por policy** | Orden de nodos + greedy-sequential PN | Solo modela la política |
+| **Hilos del SO** | Un hilo por runtime | Sincronización externa si comparten datos |
+| **Multi-rate** | Múltiples runtimes a distintas frecuencias | Major/minor frames manuales |
+| **Tick paralelo** | `Runtime(executor=ThreadPoolExecutor(...))` | Nodos deben ser independientes dentro del tick |
+| **Acciones asíncronas** | `Runtime(worker_pool=WorkerPool(...))` | Resultados llegan al siguiente tick |
 
 ---
 
 ## 7. Cuándo usar FSM, cuándo PN
-
-La pregunta más frecuente: ¿qué modelo uso?
 
 ### Usa FSM cuando...
 
@@ -717,9 +752,11 @@ La pregunta más frecuente: ¿qué modelo uso?
 * El control de flujo es lineal (incluso si tiene bucles y ramas).
 * Necesitas guards complejos que leen múltiples variables.
 
+Ejemplos:
+
 - Semáforo: ROJO → VERDE → AMARILLO → ROJO
 - Cerrojo: DESBLOQUEADO → BLOQUEADO
-- Protocolo: IDLE → SYN\_SENT → ESTABLISHED
+- Protocolo: IDLE → SYN_SENT → ESTABLISHED
 
 ### Usa PN cuando...
 
@@ -727,6 +764,8 @@ La pregunta más frecuente: ¿qué modelo uso?
 * Los recursos son contables (N slots, M conexiones disponibles).
 * El paralelismo es natural: varias actividades ocurren al mismo tiempo.
 * Necesitas modelar producción/consumo de forma explícita.
+
+Ejemplos:
 
 - Productor/consumidor: places `P_LLENOS` + `P_VACIOS`
 - Semáforo binario: `P_MUTEX` (0 o 1 token)
@@ -739,21 +778,18 @@ la PN describe los **recursos y sincronización** (qué tengo disponible):
 
 ```python
 # Sistema de acceso a sala:
-# FSM: gestiona el ciclo de apertura de puerta (CERRADA → ABRIENDO → ABIERTA → CERRANDO)
-# PN: gestiona los recursos (tokens = personas dentro, capacidad máxima)
+# FSM: gestiona el ciclo de apertura de puerta
+# PN:  gestiona los recursos (tokens = personas dentro)
 
-door_machine = Machine(...)  # controla la puerta
-capacity_net = Net(...)       # cuenta ocupantes
+door_machine = Machine(...)
+capacity_net = Net(...)
 
-fsm_rt = Runtime()
-fsm_rt.add_machine(door_machine)
-
-pn_rt = Runtime()
-pn_rt.add_net(capacity_net)
+rt = Runtime()
+rt.add_machine(door_machine)
+rt.add_net(capacity_net)
 
 while True:
-    fsm_rt.tick()   # primero: el FSM decide si abrir
-    pn_rt.tick()    # después: la PN actualiza el conteo
+    rt.tick()        # FSM y PN avanzan juntos en el mismo tick
     time.sleep(0.010)
 ```
 
@@ -765,15 +801,40 @@ while True:
 
 ```python
 from rxnet.runtime import Context, Runtime
+from rxnet.worker_pool import Priority, WorkerPool
+from concurrent.futures import ThreadPoolExecutor
 
-rt = Runtime(inputs=my_inputs)   # inputs opcionales
-rt.add_node(node)                # registrar nodo (FSM o PN o custom)
-rt.tick()                        # ejecutar un ciclo completo
-rt.context                       # acceder al contexto
+# Creación del runtime (todos los parámetros son opcionales)
+rt = Runtime(
+    inputs=my_inputs,               # snapshot global (cualquier tipo)
+    executor=ThreadPoolExecutor(4), # tick paralelo por fases
+    worker_pool=WorkerPool(4),      # acciones deferred asíncronas
+)
 
-ctx.inputs                       # entradas en vivo (mutables)
-ctx.latched_inputs               # snapshot de este tick (solo lectura)
-ctx.enqueue_deferred_action(fn, user)  # encolar acción para fase 5
+rt.add_node(node)                   # registrar nodo (FSM o PN)
+rt.tick()                           # ejecutar un ciclo completo
+rt.context                          # acceder al contexto
+
+# Contexto
+ctx.inputs                          # entradas en vivo (mutables desde fuera)
+ctx.latched_inputs                  # snapshot de este tick (solo lectura)
+
+# Encolar acción deferred — prioridad por defecto NORMAL
+ctx.enqueue_deferred_action(fn, user)
+ctx.enqueue_deferred_action(fn, user, Priority.HIGH)   # con prioridad explícita
+
+# WorkerPool
+from rxnet.worker_pool import Priority, WorkerPool
+
+with WorkerPool(num_workers=4) as pool:
+    pool.submit(fn, ctx, user, Priority.NORMAL)  # enviar manualmente
+    pool.shutdown(wait=True)                     # drenar y esperar
+
+# Prioridades disponibles
+Priority.CRITICAL   # 3
+Priority.HIGH       # 2
+Priority.NORMAL     # 1 (defecto)
+Priority.LOW        # 0
 ```
 
 ### FSM
@@ -796,8 +857,8 @@ Machine(
     state=INITIAL,
     transitions=[...],
     user=my_data,
-    latch_inputs_cb=read_inputs,   # fase 2: snapshot hardware
-    dump_outputs_cb=write_outputs, # fase 6: escribir hardware
+    latch_inputs_cb=read_inputs,    # fase 2: snapshot hardware
+    dump_outputs_cb=write_outputs,  # fase 6: escribir hardware
 )
 
 rt = Runtime()
@@ -824,7 +885,7 @@ Transition(
 # Red
 Net(
     name="n",
-    places=[1, 0, 0],          # marcado inicial
+    places=[1, 0, 0],           # marcado inicial
     transitions=[...],
     user=my_data,
     latch_inputs_cb=read_inputs,
@@ -862,8 +923,8 @@ def dump_cb(ctx: Context, user: MyData) -> None:
 
 ## Lectura adicional
 
-* **Código fuente**: `python/rxnet/` — runtime (~80 líneas), fsm (~80 líneas), pn (~130 líneas)
-* **Tests**: `python/tests/` — 56 tests que documentan el comportamiento esperado
-* **Ejemplos interactivos**: `python/examples/fsm/` y `python/examples/pn/`
-* **Especificaciones**: `docs/specs/python/requirements.md` y `docs/specs/python/design.md`
-* **Implementación C**: `c/` — misma semántica, API equivalente en C11
+- **Código fuente**: `python/rxnet/` — runtime (~80 líneas), fsm (~80 líneas), pn (~130 líneas)
+- **Tests**: `python/tests/` — 77 tests que documentan el comportamiento esperado
+- **Ejemplos interactivos**: `python/examples/fsm/` y `python/examples/pn/`
+- **Especificaciones**: `docs/specs/python/requirements.md` y `docs/specs/python/design.md`
+- **Implementación C**: `c/` — misma semántica, API equivalente en C11
