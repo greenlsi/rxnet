@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include "rxnet/coop.h"
 
@@ -33,35 +32,35 @@ rx_coop_exec_add(rx_coop_exec *ce, rx_runtime *rt)
 void
 rx_coop_exec_run(rx_coop_exec *ce)
 {
-    struct timespec now, nearest;
+    rx_tick_t now, nearest;
     int i;
 
     /* Initialise all deadlines to "now" so every task fires on the first pass. */
-    clock_gettime(CLOCK_MONOTONIC, &now);
+    now = rx_tick_now();
     for (i = 0; i < ce->ntasks; ++i)
         ce->tasks[i].next_tick = now;
 
     for (;;) {
-        clock_gettime(CLOCK_MONOTONIC, &now);
+        now = rx_tick_now();
 
         /* Run every runtime whose deadline has passed. */
         for (i = 0; i < ce->ntasks; ++i) {
-            if (rx_timespec_compare(now, ce->tasks[i].next_tick) >= 0) {
+            if (rx_tick_compare(now, ce->tasks[i].next_tick) >= 0) {
                 ce->tasks[i].rt->tick(ce->tasks[i].rt);
                 /* Advance deadline by one period (tracks drift rather than
                  * resetting from now, preventing accumulated phase slippage). */
                 ce->tasks[i].next_tick =
-                    rx_timespec_add_us(ce->tasks[i].next_tick,
-                                       ce->tasks[i].rt->period_us);
+                    rx_tick_add_us(ce->tasks[i].next_tick,
+                                   ce->tasks[i].rt->period_us);
             }
         }
 
         /* Sleep until the nearest upcoming deadline. */
         nearest = ce->tasks[0].next_tick;
         for (i = 1; i < ce->ntasks; ++i) {
-            if (rx_timespec_compare(ce->tasks[i].next_tick, nearest) < 0)
+            if (rx_tick_compare(ce->tasks[i].next_tick, nearest) < 0)
                 nearest = ce->tasks[i].next_tick;
         }
-        rx_sleep_until(nearest);
+        rx_tick_sleep_until(nearest);
     }
 }

@@ -38,28 +38,13 @@
  *   rx_thread_exec_run(&te);  // never returns
  */
 
-#include <pthread.h>
-#include <time.h>
-
 #include "rxnet/config.h"
-#include "rxnet/cyclic.h"   /* rx_timespec_add_us, rx_sleep_until */
+#include "rxnet/port.h"     /* rx_tick_t, rx_thread_t, rx_barrier_t */
 #include "rxnet/runtime.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* ------------------------------------------------------------------ */
-/* Portable generation barrier (macOS lacks pthread_barrier_t)         */
-/* ------------------------------------------------------------------ */
-
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t  cond;
-    unsigned int    waiting;
-    unsigned int    total;
-    unsigned int    generation;
-} rx_thread_barrier;
 
 /* ------------------------------------------------------------------ */
 /* Per-runtime group                                                    */
@@ -74,12 +59,12 @@ typedef struct {
 } rx_thread_arg;
 
 typedef struct {
-    rx_runtime       *rt;
-    rx_context        node_ctx[RXNET_MAX_RUNTIME_NODES];
-    rx_thread_barrier latch_b[RXNET_MAX_RUNTIME_SLOTS];
-    rx_thread_barrier commit_b[RXNET_MAX_RUNTIME_SLOTS];
-    rx_thread_arg     args[RXNET_MAX_RUNTIME_NODES];
-    pthread_t         tids[RXNET_MAX_RUNTIME_NODES];
+    rx_runtime    *rt;
+    rx_context     node_ctx[RXNET_MAX_RUNTIME_NODES];
+    rx_barrier_t   latch_b[RXNET_MAX_RUNTIME_SLOTS];
+    rx_barrier_t   commit_b[RXNET_MAX_RUNTIME_SLOTS];
+    rx_thread_arg  args[RXNET_MAX_RUNTIME_NODES];
+    rx_thread_t    tids[RXNET_MAX_RUNTIME_NODES];
 } rx_thread_group;
 
 /* ------------------------------------------------------------------ */
@@ -89,7 +74,7 @@ typedef struct {
 struct rx_thread_exec {
     rx_thread_group groups[RXNET_THREAD_MAX_RUNTIMES];
     int             ngroups;
-    struct timespec t0;   /* common start time for all groups */
+    rx_tick_t       t0;   /* common start time for all groups */
 };
 
 /* Initialise to empty. */

@@ -1,7 +1,5 @@
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include "rxnet/cyclic.h"
 
@@ -20,45 +18,6 @@ static long
 lcm(long a, long b)
 {
     return a / gcd(a, b) * b;
-}
-
-/* ------------------------------------------------------------------ */
-/* Time utilities                                                       */
-/* ------------------------------------------------------------------ */
-
-struct timespec
-rx_timespec_add_us(struct timespec t, long us)
-{
-    t.tv_nsec += us * 1000L;
-    while (t.tv_nsec >= 1000000000L) {
-        t.tv_nsec -= 1000000000L;
-        ++t.tv_sec;
-    }
-    return t;
-}
-
-int
-rx_timespec_compare(struct timespec a, struct timespec b)
-{
-    if (a.tv_sec  != b.tv_sec)  return a.tv_sec  < b.tv_sec  ? -1 : 1;
-    if (a.tv_nsec != b.tv_nsec) return a.tv_nsec < b.tv_nsec ? -1 : 1;
-    return 0;
-}
-
-void
-rx_sleep_until(struct timespec target)
-{
-    struct timespec now, rem;
-    for (;;) {
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (rx_timespec_compare(now, target) >= 0) return;
-        rem.tv_sec  = target.tv_sec  - now.tv_sec;
-        rem.tv_nsec = target.tv_nsec - now.tv_nsec;
-        if (rem.tv_nsec < 0) { rem.tv_nsec += 1000000000L; --rem.tv_sec; }
-        if (rem.tv_sec < 0) return;
-        if (nanosleep(&rem, NULL) == 0) return;
-        if (errno != EINTR) return;
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -127,21 +86,21 @@ rx_cyclic_exec_build(rx_cyclic_exec *ce)
 void
 rx_cyclic_exec_run(rx_cyclic_exec *ce)
 {
-    struct timespec next_tick;
+    rx_tick_t next_tick;
     int slot, s;
 
     if (ce->nslots == 0)
         rx_cyclic_exec_build(ce);
 
-    clock_gettime(CLOCK_MONOTONIC, &next_tick);
+    next_tick = rx_tick_now();
     slot = 0;
 
     for (;;) {
         for (s = 0; s < ce->slots[slot].count; ++s)
             ce->slots[slot].rt[s]->tick(ce->slots[slot].rt[s]);
 
-        next_tick = rx_timespec_add_us(next_tick, ce->base_us);
-        rx_sleep_until(next_tick);
+        next_tick = rx_tick_add_us(next_tick, ce->base_us);
+        rx_tick_sleep_until(next_tick);
 
         slot = (slot + 1) % ce->nslots;
     }

@@ -181,6 +181,205 @@ rx_cyclic_exec_add(&ce, &runtime.runtime);
 rx_cyclic_exec_run(&ce);
 ```
 
+## Platform ports
+
+rxnet abstracts OS/RTOS primitives behind a thin header-only layer in
+`include/rxnet/port/`.  The right port is selected automatically at compile
+time; no source file changes are required when porting.
+
+| Port | Selected when |
+|------|--------------|
+| `port/posix.h` | Default (Linux, macOS, any POSIX system) |
+| `port/freertos.h` | `ESP_PLATFORM` detected, or `-DRXNET_PORT_FREERTOS` |
+| `port/zephyr.h` | `CONFIG_ZEPHYR` detected, or `-DRXNET_PORT_ZEPHYR` |
+
+To force a specific port: `-DRXNET_PORT_POSIX`, `-DRXNET_PORT_FREERTOS`, or
+`-DRXNET_PORT_ZEPHYR`.
+
+### Provided primitives
+
+Each port defines these types and inline functions:
+
+| Primitive | Purpose |
+|-----------|---------|
+| `rx_tick_t` | `int64_t` nanoseconds |
+| `rx_tick_now()` | Monotonic clock read |
+| `rx_tick_add_us(t, us)` | Add microseconds to a tick value |
+| `rx_tick_compare(a, b)` | Compare two tick values |
+| `rx_tick_sleep_until(t)` | Sleep until tick target |
+| `rx_mutex_t` | Mutual exclusion lock |
+| `rx_mutex_init/lock/unlock` | Mutex operations |
+| `rx_thread_t` | Thread handle |
+| `rx_thread_create(t, fn, arg)` | Spawn a thread |
+| `rx_barrier_t` | Reusable generation barrier |
+| `rx_barrier_init(b, n)` | Initialise barrier for n threads |
+| `rx_barrier_wait(b)` | Wait until all n threads arrive |
+
+The trace subsystem hooks (`RX_TRACE_NOW_NS`, `RX_TRACE_LOCK_*`) are also set
+by each port, so including `rxnet/port.h` before `rxnet/trace.h` is sufficient.
+
+### FreeRTOS / ESP-IDF
+
+Build with the ESP-IDF build system.  Add `rxnet/c` as a CMake component:
+
+**`components/rxnet/CMakeLists.txt`**
+
+```cmake
+idf_component_register(
+    SRCS
+        "../../rxnet/c/src/runtime.c"
+        "../../rxnet/c/src/fsm.c"
+        "../../rxnet/c/src/pn.c"
+        "../../rxnet/c/src/cyclic.c"
+        "../../rxnet/c/src/coop.c"
+        "../../rxnet/c/src/thread.c"
+    INCLUDE_DIRS
+        "../../rxnet/c/include"
+)
+```
+
+`ESP_PLATFORM` is set automatically by ESP-IDF, so `rxnet/port/freertos.h` is
+selected without any extra flags.
+
+**Tuning** (define in your component's `CMakeLists.txt` or `sdkconfig`):
+
+| Macro | Default | Meaning |
+|-------|---------|---------|
+| `RXNET_FREERTOS_STACK_SIZE` | `4096` | Stack size per rxnet task (bytes) |
+| `RXNET_FREERTOS_TASK_PRIORITY` | `5` | FreeRTOS task priority |
+| `RXNET_FREERTOS_CORE_ID` | `-1` (any) | Pin tasks to a core (`0` or `1`) |
+
+```cmake
+target_compile_definitions(${COMPONENT_LIB} PUBLIC
+    RXNET_FREERTOS_STACK_SIZE=8192
+    RXNET_FREERTOS_TASK_PRIORITY=10
+    RXNET_FREERTOS_CORE_ID=1       # run all rxnet tasks on core 1
+)
+```
+
+**Minimal `main.c` for ESP-IDF:**
+
+```c
+#include "rxnet/fsm.h"
+#include "rxnet/thread.h"
+
+static void app_main_task(void *arg)
+{
+    rx_fsm_runtime rt;
+    rx_fsm_machine machine;
+    /* ... init machines ... */
+
+    rx_thread_exec te;
+    rx_thread_exec_init(&te);
+    rx_thread_exec_add(&te, &rt.runtime);
+    rx_thread_exec_run(&te);  /* never returns */
+}
+
+void app_main(void)
+{
+    xTaskCreate(app_main_task, "rxnet", 8192, NULL, 5, NULL);
+}
+```
+
+### Zephyr (nRF52 / nRF54)
+
+Add `rxnet/c` as a Zephyr module.  Create a minimal `zephyr/module.yml` in the
+rxnet repo root (or register it in your `west.yml` manifest):
+
+**`zephyr/module.yml`**
+
+```yaml
+name: rxnet
+build:
+  cmake: c
+  kconfig: c/Kconfig
+```
+
+**`c/Kconfig`**
+
+```kconfig
+config RXNET
+    bool "rxnet reactive synchronous runtime"
+    default y
+
+config RXNET_STACK_SIZE
+    int "Stack size for rxnet threads (bytes)"
+    default 2048
+
+config RXNET_THREAD_PRIORITY
+    int "Zephyr thread priority for rxnet threads"
+    default 5
+```
+
+**`c/CMakeLists.txt`** (Zephyr module variant)
+
+```cmake
+zephyr_library_named(rxnet)
+zephyr_library_sources(
+    src/runtime.c  src/fsm.c  src/pn.c
+    src/cyclic.c   src/coop.c src/thread.c
+)
+zephyr_library_include_directories(include)
+zephyr_library_compile_definitions(
+    RXNET_PORT_ZEPHYR
+    RXNET_ZEPHYR_STACK_SIZE=${CONFIG_RXNET_STACK_SIZE}
+    RXNET_ZEPHYR_THREAD_PRIORITY=${CONFIG_RXNET_THREAD_PRIORITY}
+)
+```
+
+**`prj.conf`** (add to your application):
+
+```
+CONFIG_RXNET=y
+CONFIG_RXNET_STACK_SIZE=4096
+CONFIG_RXNET_THREAD_PRIORITY=5
+CONFIG_PTHREAD_IPC=n      # use native Zephyr primitives, not POSIX wrapper
+```
+
+**Stack pool sizing**  
+Zephyr requires thread stacks declared at compile time.  The port pre-allocates
+a pool of `RXNET_ZEPHYR_MAX_THREADS` stacks, where:
+
+```
+RXNET_ZEPHYR_MAX_THREADS = RXNET_MAX_RUNTIME_NODES × RXNET_THREAD_MAX_RUNTIMES
+```
+
+Both constants are set in `rxnet/config.h` (defaults: 8 nodes × 4 runtimes = 32
+stacks).  Increase `RXNET_ZEPHYR_MAX_THREADS` directly if you need more:
+
+```cmake
+zephyr_library_compile_definitions(RXNET_ZEPHYR_MAX_THREADS=16)
+```
+
+**Minimal application thread:**
+
+```c
+#include "rxnet/fsm.h"
+#include "rxnet/thread.h"
+#include <zephyr/kernel.h>
+
+K_THREAD_STACK_DEFINE(main_stack, 4096);
+static struct k_thread main_thread;
+
+static void rxnet_entry(void *a, void *b, void *c)
+{
+    rx_fsm_runtime rt;
+    rx_fsm_machine machine;
+    /* ... init machines ... */
+
+    rx_thread_exec te;
+    rx_thread_exec_init(&te);
+    rx_thread_exec_add(&te, &rt.runtime);
+    rx_thread_exec_run(&te);  /* never returns */
+}
+
+void main(void)
+{
+    k_thread_create(&main_thread, main_stack, K_THREAD_STACK_SIZEOF(main_stack),
+                    rxnet_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+}
+```
+
 ## Specs
 
 Design rationale and formal requirements live in `docs/specs/c/`.

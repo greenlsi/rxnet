@@ -1,10 +1,7 @@
 #pragma once
 
 /*
- * rxnet/cyclic.h — Cyclic executive with hyperperiod dispatch table,
- *                  plus POSIX time utilities shared by all schedulers.
- *
- * ---- Cyclic executive -------------------------------------------
+ * rxnet/cyclic.h — Cyclic executive with hyperperiod dispatch table.
  *
  * A cyclic executive runs tasks at fixed periods using a static
  * dispatch table computed once at startup:
@@ -15,7 +12,7 @@
  *
  * Task t is scheduled at slot s when (s * base) % t.period == 0.
  * The loop advances one base tick per iteration, sleeping until the
- * next deadline with rx_sleep_until().
+ * next deadline with rx_tick_sleep_until() from rxnet/port.h.
  *
  * Usage:
  *
@@ -30,34 +27,18 @@
  * member, so &my_rt.runtime gives the rx_runtime * to pass here.
  * The tick vtable entry is set by rx_fsm_runtime_init / rx_pn_runtime_init.
  *
- * ---- Time utilities ---------------------------------------------
- *
- * rx_timespec_add_us, rx_timespec_compare, and rx_sleep_until are
- * general-purpose helpers useful in both cyclic executives and
- * multi-threaded schedulers (include this header for access).
+ * Platform-specific time primitives (rx_tick_t, rx_tick_now,
+ * rx_tick_add_us, rx_tick_sleep_until) are provided by rxnet/port.h,
+ * which is included transitively here.
  */
 
-#include <time.h>
-
 #include "rxnet/config.h"
+#include "rxnet/port.h"
 #include "rxnet/runtime.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* ------------------------------------------------------------------ */
-/* Time utilities                                                       */
-/* ------------------------------------------------------------------ */
-
-/* Add us microseconds to t, normalising tv_nsec. */
-struct timespec rx_timespec_add_us(struct timespec t, long us);
-
-/* Returns -1, 0, or +1 like strcmp. */
-int rx_timespec_compare(struct timespec a, struct timespec b);
-
-/* Sleep (with EINTR retry) until target as measured by CLOCK_MONOTONIC. */
-void rx_sleep_until(struct timespec target);
 
 /* ------------------------------------------------------------------ */
 /* Cyclic executive                                                     */

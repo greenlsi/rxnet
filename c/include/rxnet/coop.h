@@ -27,18 +27,16 @@
  *   rx_coop_exec_run(&ce);   // never returns
  */
 
-#include <time.h>
-
 #include "rxnet/config.h"
-#include "rxnet/cyclic.h"   /* rx_timespec_add_us, rx_timespec_compare, rx_sleep_until */
+#include "rxnet/cyclic.h"   /* rx_tick_t, rx_tick_now, rx_tick_add_us, rx_tick_sleep_until */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-    rx_runtime      *rt;
-    struct timespec  next_tick;
+    rx_runtime *rt;
+    rx_tick_t   next_tick;
 } rx_coop_task;
 
 typedef struct {

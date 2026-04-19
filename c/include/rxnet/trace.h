@@ -79,25 +79,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ── default POSIX platform hooks ─────────────────────────────────────── */
-
-#ifndef RX_TRACE_NOW_NS
-#  include <time.h>
-static inline uint64_t _rx_trace_now_ns(void) {
-    struct timespec _ts;
-    clock_gettime(CLOCK_MONOTONIC, &_ts);
-    return (uint64_t)_ts.tv_sec * 1000000000ULL + (uint64_t)_ts.tv_nsec;
-}
-#  define RX_TRACE_NOW_NS() _rx_trace_now_ns()
-#endif
-
-#ifndef RX_TRACE_LOCK_TYPE
-#  include <pthread.h>
-#  define RX_TRACE_LOCK_TYPE            pthread_mutex_t
-#  define RX_TRACE_LOCK_INIT(lk)        pthread_mutex_init(&(lk), NULL)
-#  define RX_TRACE_LOCK_ACQUIRE(lk)     pthread_mutex_lock(&(lk))
-#  define RX_TRACE_LOCK_RELEASE(lk)     pthread_mutex_unlock(&(lk))
-#endif
+/* ── platform clock and lock — provided by rxnet/port.h ──────────────── */
+/* port.h sets RX_TRACE_NOW_NS, RX_TRACE_LOCK_TYPE, RX_TRACE_LOCK_INIT,   */
+/* RX_TRACE_LOCK_ACQUIRE, and RX_TRACE_LOCK_RELEASE for the target         */
+/* platform (POSIX, FreeRTOS/ESP-IDF, Zephyr) via #ifndef guards, so they  */
+/* can still be overridden by defining them before including this header.   */
+#include "rxnet/port.h"
 
 /* ── trace buffer ─────────────────────────────────────────────────────── */
 

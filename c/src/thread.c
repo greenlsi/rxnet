@@ -1,43 +1,7 @@
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include "rxnet/thread.h"
-
-/* ------------------------------------------------------------------ */
-/* Portable generation barrier                                          */
-/* ------------------------------------------------------------------ */
-
-static int
-barrier_init(rx_thread_barrier *b, unsigned int total)
-{
-    b->waiting    = 0;
-    b->total      = total;
-    b->generation = 0;
-    if (pthread_mutex_init(&b->mutex, NULL) != 0) return -1;
-    if (pthread_cond_init(&b->cond, NULL) != 0) {
-        pthread_mutex_destroy(&b->mutex);
-        return -1;
-    }
-    return 0;
-}
-
-static void
-barrier_wait(rx_thread_barrier *b)
-{
-    unsigned int gen;
-    pthread_mutex_lock(&b->mutex);
-    gen = b->generation;
-    if (++b->waiting == b->total) {
-        b->generation++;
-        b->waiting = 0;
-        pthread_cond_broadcast(&b->cond);
-    } else {
-        while (b->generation == gen)
-            pthread_cond_wait(&b->cond, &b->mutex);
-    }
-    pthread_mutex_unlock(&b->mutex);
-}
 
 /* ------------------------------------------------------------------ */
 /* Node loop                                                            */
@@ -52,38 +16,37 @@ node_loop(rx_thread_arg *a)
     int              idx   = a->node_idx;
     rx_node         *node  = rt->nodes[idx].node;
     rx_context      *ctx   = &grp->node_ctx[idx];
-    long  period_us = rt->nodes[idx].period_us > 0
-                      ? rt->nodes[idx].period_us : rt->period_us;
-    int   step      = (rt->period_us > 0)
-                      ? (int)(period_us / rt->period_us) : 1;
-    struct timespec next     = te->t0;
-    int             base_tick = 0;
+    long      period_us = rt->nodes[idx].period_us > 0
+                          ? rt->nodes[idx].period_us : rt->period_us;
+    int       step      = (rt->period_us > 0)
+                          ? (int)(period_us / rt->period_us) : 1;
+    rx_tick_t next      = te->t0;
+    int       base_tick = 0;
 
     for (;;) {
         int slot;
 
-        rx_sleep_until(next);
+        rx_tick_sleep_until(next);
         slot = base_tick % rt->nslots;
 
-        barrier_wait(&grp->latch_b[slot]);
+        rx_barrier_wait(&grp->latch_b[slot]);
         node->vtable->latch_inputs(node, ctx);
         node->vtable->evaluate(node, ctx);
 
-        barrier_wait(&grp->commit_b[slot]);
+        rx_barrier_wait(&grp->commit_b[slot]);
         node->vtable->commit(node, ctx);
         rx_context_dispatch_deferred(ctx);
         node->vtable->dump_outputs(node, ctx);
 
-        next = rx_timespec_add_us(next, period_us);
+        next = rx_tick_add_us(next, period_us);
         base_tick += step;
     }
 }
 
-static void *
+static void
 thread_entry(void *arg)
 {
     node_loop((rx_thread_arg *)arg);
-    return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -128,8 +91,8 @@ rx_thread_exec_add(rx_thread_exec *te, rx_runtime *rt)
 
     for (s = 0; s < rt->nslots; s++) {
         unsigned int count = (unsigned int)rt->slots_storage[s].count;
-        if (barrier_init(&grp->latch_b[s],  count) != 0) return -1;
-        if (barrier_init(&grp->commit_b[s], count) != 0) return -1;
+        if (rx_barrier_init(&grp->latch_b[s],  count) != 0) return -1;
+        if (rx_barrier_init(&grp->commit_b[s], count) != 0) return -1;
     }
 
     te->ngroups++;
@@ -143,7 +106,7 @@ rx_thread_exec_run(rx_thread_exec *te)
     int last_g = te->ngroups - 1;
     int last_n;
 
-    clock_gettime(CLOCK_MONOTONIC, &te->t0);
+    te->t0 = rx_tick_now();
 
     /* Spawn all nodes except the last node of the last group. */
     for (g = 0; g < te->ngroups; g++) {
@@ -155,10 +118,10 @@ rx_thread_exec_run(rx_thread_exec *te)
             grp->args[i].te        = te;
             grp->args[i].group_idx = g;
             grp->args[i].node_idx  = i;
-            if (pthread_create(&grp->tids[i], NULL,
-                               thread_entry, &grp->args[i]) != 0) {
+            if (rx_thread_create(&grp->tids[i],
+                                thread_entry, &grp->args[i]) != 0) {
                 fprintf(stderr,
-                        "rxnet: thread_exec_run: pthread_create failed "
+                        "rxnet: thread_exec_run: rx_thread_create failed "
                         "(group %d, node %d)\n", g, i);
                 grp->tids[i] = 0;
             }
