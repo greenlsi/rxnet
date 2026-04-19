@@ -1,16 +1,16 @@
 /*
- * PN 04-mix — cyclic executive with per-net periods + tracing.
+ * FSM 04-mix — cyclic executive with per-machine periods + tracing.
  *
- * Identical to main_cli.c but with the rxnet tracing subsystem enabled.
+ * Identical to main_cyclic.c but with the rxnet tracing subsystem enabled.
  * Compile with -DRX_TRACE_ENABLE (done automatically by the Makefile target
- * pn_04_mix_trace).
+ * fsm_04_mix_cyclic_trace).
  *
  * Extra CLI command:
  *   trace          — export trace.bin and print visualisation instructions
  *
  * Build:
- *   make -C c pn_04_mix_trace
- *   ./c/build/pn_04_mix_trace
+ *   make -C c fsm_04_mix_cyclic_trace
+ *   ./c/build/fsm_04_mix_cyclic_trace
  *   > trace
  *   python -m rxnet.tools.trace trace.bin --report trace.html --open
  */
@@ -23,14 +23,13 @@
 #endif
 #include "rxnet/cyclic.h"
 #include "rxnet/fsm.h"
-#include "rxnet/pn.h"
 #include "rxnet/trace.h"
 
 #include "app_driver.h"
+#include "auto_fsm.h"
+#include "blink_fsm.h"
 #include "cli_fsm.h"
-#include "light_pn.h"
-#include "auto_pn.h"
-#include "blink_pn.h"
+#include "light_fsm.h"
 
 #define LIGHT_A_GPIO         2
 #define LIGHT_B_GPIO         4
@@ -43,29 +42,31 @@
 #define DEFAULT_FREQ_B_HZ    2u
 #define DEFAULT_TIMEOUT_C_MS 9000u
 
-/* light_pn / auto_pn place ids */
-enum { P_OFF = 0, P_ON = 1, P_REQUEST = 2 };
+/* FSM state ids (must match the machine implementations) */
+enum { LIGHT_OFF = 0, LIGHT_ON = 1 };
+enum { BLINK_OFF = 0, BLINK_X1 = 1, BLINK_X2 = 2 };
 
 typedef struct {
-    rx_pn_net *light_a;
-    rx_pn_net *blink_b;
-    rx_pn_net *auto_c;
-} app_data;
+    rx_fsm_machine *light_a_machine;
+    rx_fsm_machine *blink_b_machine;
+    rx_fsm_machine *auto_c_machine;
+} mix_app_data;
 
 /* ── tracer (global for CLI command access) ── */
 static rx_trace_buf_t g_tracer;
 
 /* ── CLI commands ─────────────────────────────────────────────────────── */
 
-static const char *light_state(const rx_pn_net *net, int p_on) {
-    return (net != NULL && net->places[p_on] > 0) ? "ON" : "OFF";
+static const char *light_state_name(int state) {
+    return state == 0 ? "OFF" : "ON";
 }
 
-static const char *blink_state(const rx_pn_net *net) {
-    if (net == NULL) return "OFF";
-    if (net->places[2] > 0) return "X2";
-    if (net->places[1] > 0) return "X1";
-    return "OFF";
+static const char *blink_state_name(int state) {
+    switch (state) {
+        case 1: return "BLINK_X1";
+        case 2: return "BLINK_X2";
+        default: return "OFF";
+    }
 }
 
 static void
@@ -90,13 +91,13 @@ static void
 cmd_status(rx_fsm_context *ctx, cli_machine_data *cli,
            const char *command, void *ud)
 {
-    const app_data *app = (const app_data *)ud;
+    const mix_app_data *app = (const mix_app_data *)ud;
     (void)ctx; (void)cli; (void)command;
     printf(
-        "A(light): %s | B(blink): %s | C(auto): %s\n",
-        light_state(app->light_a, 1),
-        blink_state(app->blink_b),
-        light_state(app->auto_c, 1)
+        "A(light): state=%s | B(blink): state=%s | C(auto): state=%s\n",
+        light_state_name(app->light_a_machine->state),
+        blink_state_name(app->blink_b_machine->state),
+        light_state_name(app->auto_c_machine->state)
     );
 }
 
@@ -104,12 +105,12 @@ static void
 cmd_freq(rx_fsm_context *ctx, cli_machine_data *cli,
          const char *command, void *ud)
 {
-    app_data *app = (app_data *)ud;
+    mix_app_data *app = (mix_app_data *)ud;
     unsigned int freq_hz = 0u;
     (void)ctx; (void)cli;
     if (sscanf(command, "freq %u", &freq_hz) != 1) { printf("usage: freq <hz>\n"); return; }
     if (freq_hz == 0u) { printf("frequency must be > 0 hz\n"); return; }
-    if (blink_pn_set_base_hz(app->blink_b, freq_hz) != 0) { printf("failed\n"); return; }
+    if (blink_fsm_set_base_hz(app->blink_b_machine, freq_hz) != 0) { printf("failed\n"); return; }
     printf("blink B base frequency set to %u hz\n", freq_hz);
 }
 
@@ -117,12 +118,12 @@ static void
 cmd_timeout(rx_fsm_context *ctx, cli_machine_data *cli,
             const char *command, void *ud)
 {
-    app_data *app = (app_data *)ud;
+    mix_app_data *app = (mix_app_data *)ud;
     unsigned int timeout_ms = 0u;
     (void)ctx; (void)cli;
     if (sscanf(command, "timeout %u", &timeout_ms) != 1) { printf("usage: timeout <ms>\n"); return; }
     if (timeout_ms == 0u) { printf("timeout must be > 0 ms\n"); return; }
-    if (auto_pn_set_timeout_ms(app->auto_c, timeout_ms) != 0) { printf("failed\n"); return; }
+    if (auto_fsm_set_auto_off_timeout_ms(app->auto_c_machine, timeout_ms) != 0) { printf("failed\n"); return; }
     printf("auto C timeout set to %u ms\n", timeout_ms);
 }
 
@@ -165,31 +166,25 @@ cmd_quit(rx_fsm_context *ctx, cli_machine_data *cli,
 /* ── main ─────────────────────────────────────────────────────────────── */
 
 int main(void) {
-    rx_pn_net light_a, blink_b, auto_c;
-    rx_pn_runtime pn_rt;
-    rx_fsm_runtime cli_rt;
-    rx_fsm_machine cli_machine;
-    app_data app = {&light_a, &blink_b, &auto_c};
+    rx_fsm_machine light_a_machine, blink_b_machine, auto_c_machine, cli_machine;
+    rx_fsm_runtime runtime;
+    mix_app_data app = {&light_a_machine, &blink_b_machine, &auto_c_machine};
     cli_machine_data cli_data;
     rx_cyclic_exec ce;
 
-    if (rx_pn_runtime_init(&pn_rt,  3) != 0 ||
-        rx_fsm_runtime_init(&cli_rt, 1) != 0) {
+    if (rx_fsm_runtime_init(&runtime, 4) != 0) {
         fprintf(stderr, "runtime_init failed\n");
         return 1;
     }
 
-    if (light_pn_init(&light_a, BUTTON_A_GPIO, LIGHT_A_GPIO) != 0 ||
-        blink_pn_init(&blink_b, BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ) != 0 ||
-        auto_pn_init(&auto_c,   BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS) != 0) {
-        fprintf(stderr, "pn_init failed\n");
-        return 1;
-    }
+    light_fsm_create(&light_a_machine, BUTTON_A_GPIO, LIGHT_A_GPIO);
+    blink_fsm_create(&blink_b_machine, BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ);
+    auto_fsm_create(&auto_c_machine,   BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS);
 
-    if (rx_pn_runtime_add_net(&pn_rt, &light_a, FAST_PERIOD_US, 0) != 0 ||
-        rx_pn_runtime_add_net(&pn_rt, &blink_b, FAST_PERIOD_US, 0) != 0 ||
-        rx_pn_runtime_add_net(&pn_rt, &auto_c,  SLOW_PERIOD_US, 0) != 0) {
-        fprintf(stderr, "add_net failed\n");
+    if (rx_fsm_runtime_add_machine(&runtime, &light_a_machine, FAST_PERIOD_US, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &blink_b_machine, FAST_PERIOD_US, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &auto_c_machine,  SLOW_PERIOD_US, 0) != 0) {
+        fprintf(stderr, "add_machine failed\n");
         return 1;
     }
 
@@ -210,7 +205,7 @@ int main(void) {
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
-    if (rx_fsm_runtime_add_machine(&cli_rt, &cli_machine, CLI_PERIOD_US, 0) != 0) {
+    if (rx_fsm_runtime_add_machine(&runtime, &cli_machine, CLI_PERIOD_US, 0) != 0) {
         fprintf(stderr, "add_machine cli failed\n");
         return 1;
     }
@@ -218,38 +213,31 @@ int main(void) {
     /* ── set up tracer ── */
     rx_trace_init(&g_tracer, 0);
 
-    /* pn_rt: light_a=nid0, blink_b=nid1, auto_c=nid2 */
-    rx_trace_attach(&g_tracer, &light_a.node, 0);
+    rx_trace_attach(&g_tracer, &light_a_machine.node, 0);
     rx_trace_set_node_name(&g_tracer, 0, "light_a");
-    rx_trace_set_place_name(&g_tracer, 0, P_OFF,     "OFF");
-    rx_trace_set_place_name(&g_tracer, 0, P_ON,      "ON");
-    rx_trace_set_place_name(&g_tracer, 0, P_REQUEST, "REQ");
-    rx_trace_set_trans_name(&g_tracer, 0, 0, "turn_on");
-    rx_trace_set_trans_name(&g_tracer, 0, 1, "turn_off");
+    rx_trace_set_state_name(&g_tracer, 0, LIGHT_OFF, "OFF");
+    rx_trace_set_state_name(&g_tracer, 0, LIGHT_ON,  "ON");
 
-    rx_trace_attach(&g_tracer, &blink_b.node, 1);
+    rx_trace_attach(&g_tracer, &blink_b_machine.node, 1);
     rx_trace_set_node_name(&g_tracer, 1, "blink_b");
-    rx_trace_set_place_name(&g_tracer, 1, 0, "OFF");
-    rx_trace_set_place_name(&g_tracer, 1, 1, "X1");
-    rx_trace_set_place_name(&g_tracer, 1, 2, "X2");
+    rx_trace_set_state_name(&g_tracer, 1, BLINK_OFF, "OFF");
+    rx_trace_set_state_name(&g_tracer, 1, BLINK_X1,  "BLINK_X1");
+    rx_trace_set_state_name(&g_tracer, 1, BLINK_X2,  "BLINK_X2");
 
-    rx_trace_attach(&g_tracer, &auto_c.node, 2);
+    rx_trace_attach(&g_tracer, &auto_c_machine.node, 2);
     rx_trace_set_node_name(&g_tracer, 2, "auto_c");
-    rx_trace_set_place_name(&g_tracer, 2, P_OFF,     "OFF");
-    rx_trace_set_place_name(&g_tracer, 2, P_ON,      "ON");
-    rx_trace_set_place_name(&g_tracer, 2, P_REQUEST, "REQ");
+    rx_trace_set_state_name(&g_tracer, 2, LIGHT_OFF, "OFF");
+    rx_trace_set_state_name(&g_tracer, 2, LIGHT_ON,  "ON");
 
-    /* cli_rt: cli=nid3 (separate runtime, same tracer) */
     rx_trace_attach(&g_tracer, &cli_machine.node, 3);
     rx_trace_set_node_name(&g_tracer, 3, "cli");
 
-    cmd_help(&cli_rt.context, &cli_data, "help", NULL);
-    cmd_status(&cli_rt.context, &cli_data, "status", &app);
+    cmd_help(&runtime.context, &cli_data, "help", NULL);
+    cmd_status(&runtime.context, &cli_data, "status", &app);
     cli_fsm_print_prompt(&cli_data);
 
     rx_cyclic_exec_init(&ce);
-    rx_cyclic_exec_add(&ce, &pn_rt.runtime);
-    rx_cyclic_exec_add(&ce, &cli_rt.runtime);
+    rx_cyclic_exec_add(&ce, &runtime.runtime);
     rx_cyclic_exec_run(&ce); /* never returns */
 
     return 0;

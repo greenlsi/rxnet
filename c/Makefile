@@ -13,7 +13,7 @@ FSM_03_BLINK_BIN := $(BUILD_DIR)/fsm_03_blink
 FSM_04_MIX_BIN        := $(BUILD_DIR)/fsm_04_mix_cyclic
 FSM_04_MIX_THREADS_BIN := $(BUILD_DIR)/fsm_04_mix_threads
 FSM_04_MIX_COOP_BIN    := $(BUILD_DIR)/fsm_04_mix_coop
-FSM_04_MIX_TRACE_BIN          := $(BUILD_DIR)/fsm_04_mix_trace
+FSM_04_MIX_CYCLIC_TRACE_BIN   := $(BUILD_DIR)/fsm_04_mix_cyclic_trace
 FSM_04_MIX_THREADS_TRACE_BIN := $(BUILD_DIR)/fsm_04_mix_threads_trace
 FSM_04_MIX_COOP_TRACE_BIN    := $(BUILD_DIR)/fsm_04_mix_coop_trace
 PN_01_LIGHT_BIN  := $(BUILD_DIR)/pn_01_light
@@ -22,7 +22,7 @@ PN_03_BLINK_BIN  := $(BUILD_DIR)/pn_03_blink
 PN_04_MIX_BIN         := $(BUILD_DIR)/pn_04_mix_cyclic
 PN_04_MIX_THREADS_BIN := $(BUILD_DIR)/pn_04_mix_threads
 PN_04_MIX_COOP_BIN    := $(BUILD_DIR)/pn_04_mix_coop
-PN_04_MIX_TRACE_BIN          := $(BUILD_DIR)/pn_04_mix_trace
+PN_04_MIX_CYCLIC_TRACE_BIN   := $(BUILD_DIR)/pn_04_mix_cyclic_trace
 PN_04_MIX_THREADS_TRACE_BIN := $(BUILD_DIR)/pn_04_mix_threads_trace
 PN_04_MIX_COOP_TRACE_BIN    := $(BUILD_DIR)/pn_04_mix_coop_trace
 MIXED_BIN        := $(BUILD_DIR)/mixed
@@ -44,8 +44,8 @@ TEST_BINS         := $(TEST_RUNTIME_BIN) $(TEST_FSM_BIN) $(TEST_PN_BIN) $(TEST_T
 PARITY_RUNNER_BIN := $(BUILD_DIR)/parity_runner
 
 .PHONY: all lib examples test parity clean \
-        fsm_04_mix_trace fsm_04_mix_threads_trace fsm_04_mix_coop_trace \
-        pn_04_mix_trace  pn_04_mix_threads_trace  pn_04_mix_coop_trace
+        fsm_04_mix_cyclic_trace fsm_04_mix_threads_trace fsm_04_mix_coop_trace \
+        pn_04_mix_cyclic_trace  pn_04_mix_threads_trace  pn_04_mix_coop_trace
 
 all: lib examples
 
@@ -85,9 +85,9 @@ $(BUILD_DIR):
 # ------------------------------------------------------------------ #
 
 examples: fsm_01_light fsm_02_auto fsm_03_blink fsm_04_mix_cyclic fsm_04_mix_threads fsm_04_mix_coop \
-          fsm_04_mix_trace fsm_04_mix_threads_trace fsm_04_mix_coop_trace \
+          fsm_04_mix_cyclic_trace fsm_04_mix_threads_trace fsm_04_mix_coop_trace \
           pn_01_light pn_02_auto pn_03_blink pn_04_mix pn_04_mix_threads pn_04_mix_coop \
-          pn_04_mix_trace pn_04_mix_threads_trace pn_04_mix_coop_trace \
+          pn_04_mix_cyclic_trace pn_04_mix_threads_trace pn_04_mix_coop_trace \
           mixed
 
 fsm_01_light: $(FSM_01_LIGHT_BIN)
@@ -107,7 +107,7 @@ $(FSM_03_BLINK_BIN): $(LIB) examples/fsm/03-blink/app_driver.c examples/fsm/03-b
 
 fsm_04_mix_cyclic: $(FSM_04_MIX_BIN)
 
-$(FSM_04_MIX_BIN): $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_cli.c | $(BUILD_DIR)
+$(FSM_04_MIX_BIN): $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_cyclic.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
 
 MIX_SHARED := $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c
@@ -123,12 +123,12 @@ fsm_04_mix_coop: $(FSM_04_MIX_COOP_BIN)
 $(FSM_04_MIX_COOP_BIN): $(MIX_SHARED) examples/fsm/04-mix/main_coop.c | $(BUILD_DIR)
 	$(CC) $(MIX_FLAGS) $^ -o $@
 
-fsm_04_mix_trace: $(FSM_04_MIX_TRACE_BIN)
+fsm_04_mix_cyclic_trace: $(FSM_04_MIX_CYCLIC_TRACE_BIN)
 
-$(FSM_04_MIX_TRACE_BIN): $(TRACE_SRCS) src/cyclic.c \
+$(FSM_04_MIX_CYCLIC_TRACE_BIN): $(TRACE_SRCS) src/cyclic.c \
     examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c \
     examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c \
-    examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_trace.c | $(BUILD_DIR)
+    examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_cyclic_trace.c | $(BUILD_DIR)
 	$(CC) $(EXAMPLE_CFLAGS) -DRX_TRACE_ENABLE -Iexamples/fsm/04-mix $^ -o $@ -lpthread
 
 fsm_04_mix_threads_trace: $(FSM_04_MIX_THREADS_TRACE_BIN)
@@ -167,14 +167,14 @@ pn_04_mix_coop: $(PN_04_MIX_COOP_BIN)
 $(PN_04_MIX_COOP_BIN): $(PN_MIX_SHARED) examples/pn/04-mix/main_coop.c | $(BUILD_DIR)
 	$(CC) $(PN_MIX_FLAGS) $^ -o $@
 
-pn_04_mix_trace: $(PN_04_MIX_TRACE_BIN)
+pn_04_mix_cyclic_trace: $(PN_04_MIX_CYCLIC_TRACE_BIN)
 
-$(PN_04_MIX_TRACE_BIN): $(TRACE_SRCS) src/cyclic.c \
+$(PN_04_MIX_CYCLIC_TRACE_BIN): $(TRACE_SRCS) src/cyclic.c \
     $(PN_CLI_SHARED) \
     examples/pn/01-light/light_pn.c \
     examples/pn/02-auto/auto_pn.c \
     examples/pn/03-blink/blink_pn.c \
-    examples/pn/04-mix/main_trace.c | $(BUILD_DIR)
+    examples/pn/04-mix/main_cyclic_trace.c | $(BUILD_DIR)
 	$(CC) $(PN_CLI_FLAGS) -DRX_TRACE_ENABLE \
 	    -Iexamples/pn/01-light \
 	    -Iexamples/pn/02-auto \
@@ -236,7 +236,7 @@ $(PN_04_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/01-light/light_pn.c \
     examples/pn/02-auto/auto_pn.c \
     examples/pn/03-blink/blink_pn.c \
-    examples/pn/04-mix/main_cli.c | $(BUILD_DIR)
+    examples/pn/04-mix/main_cyclic.c | $(BUILD_DIR)
 	$(CC) $(PN_CLI_FLAGS) \
 	    -Iexamples/pn/01-light \
 	    -Iexamples/pn/02-auto \
