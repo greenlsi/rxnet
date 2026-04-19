@@ -311,15 +311,32 @@ _REPORT_TEMPLATE = """\
   <button id="open-perfetto">Open in Perfetto ↗</button>
 
   <script>
+    const PERFETTO_URL = "https://ui.perfetto.dev";
     const perf = {perf_json};
+
     document.getElementById("open-perfetto").addEventListener("click", () => {{
-      const blob = new Blob([JSON.stringify(perf)], {{type: "application/json"}});
-      const url  = URL.createObjectURL(blob);
-      // ui.perfetto.dev can open a local blob via postMessage
-      const w = window.open("https://ui.perfetto.dev");
-      w.addEventListener("load", () => {{
-        w.postMessage({{perfetto: {{buffer: perf, title: "rxnet"}}}}, "*");
-      }});
+      // Encode the Chrome Trace JSON as UTF-8 bytes.
+      const bytes = new TextEncoder().encode(JSON.stringify(perf));
+
+      // Perfetto postMessage protocol:
+      //   1. Open ui.perfetto.dev and post "PING" until it responds "PONG".
+      //   2. On "PONG", send {{ perfetto: {{ buffer, title }} }}.
+      const win = window.open(PERFETTO_URL);
+      let interval;
+
+      function onMessage(evt) {{
+        if (evt.source !== win || evt.data !== "PONG") return;
+        clearInterval(interval);
+        window.removeEventListener("message", onMessage);
+        win.postMessage(
+          {{ perfetto: {{ buffer: bytes, title: "rxnet trace", fileName: "rxnet.json" }} }},
+          PERFETTO_URL
+        );
+      }}
+
+      window.addEventListener("message", onMessage);
+      // Poll with PING until Perfetto is ready (it ignores PINGs before init).
+      interval = setInterval(() => win.postMessage("PING", PERFETTO_URL), 200);
     }});
   </script>
 </body>
