@@ -24,6 +24,7 @@ class Transition:
     produce: Sequence[Arc] = ()
     guard: Guard | None = None
     action: Action | None = None
+    label: str | None = None  # transition label for diagrams and traces
 
 
 @dataclass(slots=True)
@@ -34,6 +35,8 @@ class Net:
     user: Any = None
     latch_inputs_cb: NodePhaseCb | None = None
     dump_outputs_cb: NodePhaseCb | None = None
+    place_names: dict[int, str] | None = None       # {0: "IDLE", 1: "ON"}
+    transition_names: list[str] | None = None        # ["press", "release"]
     _next_places: list[int] = field(init=False, repr=False)
     _fire_flags: list[bool] = field(init=False, repr=False)
 

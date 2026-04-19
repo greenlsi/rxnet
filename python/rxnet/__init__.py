@@ -4,6 +4,7 @@ from .cyclic import CyclicExecutive, sleep_until
 from .fsm import Action, Machine, Runtime, Transition
 from .runtime import Context
 from .thread import ThreadExecutive
+from .trace import Tracer
 from .worker_pool import Priority, WorkerPool
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "Priority",
     "Runtime",
     "ThreadExecutive",
+    "Tracer",
     "Transition",
     "WorkerPool",
     "sleep_until",

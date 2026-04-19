@@ -18,6 +18,7 @@ class Transition:
     to_state: int
     guard: Guard | None = None
     action: Action | None = None
+    label: str | None = None  # arc label for diagrams and traces
 
 
 @dataclass(slots=True)
@@ -28,6 +29,7 @@ class Machine:
     user: Any = None
     latch_inputs_cb: NodePhaseCb | None = None
     dump_outputs_cb: NodePhaseCb | None = None
+    state_names: dict[int, str] | None = None  # {0: "OFF", 1: "ON"}
     _next_state: int = field(init=False, repr=False)
     _proposed_action: Action | None = field(init=False, default=None, repr=False)
 
