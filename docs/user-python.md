@@ -1,5 +1,3 @@
----
-
 ## 3. El tick y sus fases
 
 Cada llamada a `runtime.tick()` ejecuta cinco fases en orden estricto:
