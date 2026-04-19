@@ -917,6 +917,127 @@ static void dump_cb(rx_fsm_context *ctx, void *user) {
 
 ---
 
+## 9. Depuración y trazado
+
+rxnet incluye un subsistema de trazado **completamente opcional**: cuando no se
+activa, genera **cero código y cero datos**. Los macros se expanden a `((void)0)`,
+los campos extra de las estructuras no existen, y el enlazador no incluye ningún
+símbolo relacionado. No hay rama de comprobación, no hay puntero a `NULL`, no
+hay coste en el camino caliente.
+
+### Activar en tiempo de compilación
+
+```makefile
+CFLAGS += -DRX_TRACE_ENABLE
+```
+
+Sin ese flag, el código de producción es exactamente el mismo que sin el
+subsistema. Con él, se añaden:
+
+- Un buffer circular de eventos embebido en `rx_runtime_t` (sin heap).
+- Llamadas a macros de trazado en el runtime, `rx_fsm_tick()` y
+  `rx_pn_tick()`.
+- Un callback de drenado configurable para extraer los datos (UART, USB CDC,
+  TCP, fichero…).
+
+### Uso básico
+
+```c
+#include "rxnet/trace.h"
+
+/* Callback de drenado: recibe los bytes del buffer y los envía por donde sea */
+static void drain_cb(const uint8_t *data, size_t len, void *arg) {
+    fwrite(data, 1, len, (FILE *)arg);
+}
+
+int main(void) {
+    rx_runtime_t rt;
+    rx_runtime_init(&rt);
+
+    /* Habilitar trazado antes del primer tick */
+    rx_trace_enable(&rt, drain_cb, stdout);
+
+    /* ... añadir nodos y ejecutar ticks ... */
+}
+```
+
+El buffer circular se drena automáticamente cada vez que se llena (o manualmente
+con `rx_trace_drain()`), enviando los datos al callback en el formato binario
+estándar de rxnet.
+
+### Visualizar desde el Mac de desarrollo
+
+Una vez que tienes el fichero binario (o lo recibes por TCP/UART), ejecuta el
+decodificador Python desde el Mac:
+
+```bash
+python -m rxnet.tools.trace trace.bin --report trace.html --open
+python -m rxnet.tools.trace trace.bin --stats          # WCRT por nodo en texto
+python -m rxnet.tools.trace trace.bin --perfetto out.json
+```
+
+O si el target expone el buffer vía TCP:
+
+```bash
+python -m rxnet.tools.trace http://target:7777 --report trace.html --open
+```
+
+El informe HTML contiene:
+
+- **Diagramas DOT** de cada FSM y red de Petri (renderizados en el navegador
+  con Graphviz/WASM, sin instalación adicional).
+- **Tabla WCRT** — tiempo de respuesta en caso peor por nodo.
+- **Botón Perfetto** — abre la traza en [ui.perfetto.dev](https://ui.perfetto.dev),
+  una línea de tiempo interactiva donde se pueden ver activaciones, transiciones,
+  duraciones de fase y eventos de usuario.
+
+### Trazado de fases (para docencia)
+
+Activar con el flag adicional:
+
+```makefile
+CFLAGS += -DRX_TRACE_ENABLE -DRX_TRACE_PHASES
+```
+
+Se registra el inicio y fin de cada fase (latch / evaluate / commit / dump),
+lo que permite medir cuánto tarda cada una y visualizarlo en Perfetto.
+
+### Eventos de usuario
+
+Desde cualquier parte del código (incluidas ISR):
+
+```c
+RX_TRACE_USER(&rt, LABEL_TEMPERATURA, 42);
+RX_TRACE_USER(&rt, LABEL_ALARMA, 1);
+```
+
+`LABEL_*` son constantes `uint16_t` definidas por la aplicación. Aparecen en la
+línea de tiempo de Perfetto como eventos instantáneos globales.
+
+### Nombres de estados y lugares
+
+Para que los diagramas y la traza muestren nombres legibles, usa el macro
+`RX_FSM_T` (en lugar del inicializador estándar) al declarar las transiciones:
+
+```c
+static const rx_fsm_transition_t trans[] = {
+    RX_FSM_T(ROJO, VERDE,  guard_boton, NULL, "arrancar"),
+    RX_FSM_T(VERDE, ROJO,  NULL,        NULL, "parar"),
+};
+```
+
+El campo de nombre de transición solo existe cuando `RX_TRACE_ENABLE` está
+definido; en producción la estructura es la misma de siempre.
+
+### Seguridad en ISR
+
+Todos los macros de trazado son seguros en ISR. La sección crítica usa el hook
+`RX_TRACE_CRITICAL_ENTER` / `RX_TRACE_CRITICAL_EXIT`, que por defecto emplea
+`PRIMASK` en ARM Cortex-M y un spinlock atómico en POSIX. Se puede redefinir
+para cualquier plataforma.
+
+---
+
 ## Lectura adicional
 
 - **Código fuente**: `c/` — runtime (~200 líneas), fsm (~150 líneas), pn (~200 líneas)

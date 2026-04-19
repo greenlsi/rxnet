@@ -919,6 +919,131 @@ def dump_cb(ctx: Context, user: MyData) -> None:
 
 ---
 
+## 9. Depuración y trazado
+
+rxnet incluye un subsistema de trazado **totalmente opcional**: si no se activa,
+el código de producción es idéntico al que nunca supo que existía. No hay ramas
+extra, no hay comprobaciones de `None`, no hay coste en el camino caliente.
+
+### Cómo funciona
+
+Al llamar a `Tracer.attach(rt)`, el tracer envuelve cada nodo con un proxy
+transparente (`_Traced`) que delega las cuatro fases al nodo original y, antes
+y después de cada una, escribe un evento de 16 bytes en un buffer circular
+pre-asignado. La estructura del runtime no se modifica: si el tracer nunca se
+adjunta, `Runtime`, `Machine` y `Net` no contienen ni una línea relacionada con
+el trazado.
+
+### Uso básico
+
+```python
+from rxnet import Tracer
+
+tracer = Tracer(max_events=4096)
+tracer.attach(rt)          # antes de ce.run() / te.run()
+
+ce = CyclicExecutive()
+ce.add(rt)
+ce.run()                   # el sistema corre con trazado activo
+```
+
+Mientras el sistema está en marcha, el tracer acumula eventos en el buffer
+circular. Cuando está lleno, los eventos más antiguos se descartan (se cuenta
+el número de eventos perdidos).
+
+### Descargar y visualizar la traza
+
+#### Vía HTTP (sistema en ejecución)
+
+```python
+tracer.serve(port=7777)    # daemon HTTP; llamar antes de ce.run()
+```
+
+Desde el Mac de desarrollo:
+
+```bash
+python -m rxnet.tools.trace http://target:7777 --report trace.html --open
+```
+
+Se genera un informe HTML independiente que se abre directamente en el
+navegador. Contiene:
+
+- **Diagramas DOT** de cada FSM y red de Petri del sistema (renderizados en el
+  navegador con Graphviz/WASM, sin instalación adicional).
+- **Tabla WCRT** — tiempo de respuesta en caso peor por nodo.
+- **Botón Perfetto** — abre la traza completa en [ui.perfetto.dev](https://ui.perfetto.dev)
+  como línea de tiempo interactiva donde se pueden inspeccionar activaciones,
+  transiciones, duraciones de fase y eventos de usuario.
+
+#### Desde un fichero
+
+```python
+tracer.export("trace.bin")
+```
+
+```bash
+python -m rxnet.tools.trace trace.bin --report trace.html --open
+python -m rxnet.tools.trace trace.bin --stats          # WCRT por nodo en texto
+python -m rxnet.tools.trace trace.bin --perfetto out.json
+```
+
+### Trazado de fases (para docencia)
+
+Con `phases=True` se registra el inicio y fin de cada fase individual
+(latch / evaluate / commit / dump), lo que permite medir y visualizar cuánto
+tarda cada una:
+
+```python
+tracer = Tracer(max_events=8192, phases=True)
+tracer.attach(rt)
+```
+
+Útil para identificar qué fase concentra el tiempo de respuesta o para
+explicar la ejecución del tick en un contexto educativo.
+
+### Eventos de usuario
+
+Se pueden inyectar eventos arbitrarios desde cualquier hilo:
+
+```python
+tracer.user("temperatura", 42)
+tracer.user("alarma", 1)
+```
+
+Aparecen en la línea de tiempo de Perfetto como eventos instantáneos globales,
+alineados con las activaciones de los nodos.
+
+### Nombres de estados y lugares
+
+Para que los diagramas y la traza muestren nombres legibles en lugar de índices
+numéricos, declara `state_names` en `Machine` y `place_names` /
+`transition_names` en `Net`:
+
+```python
+Machine(
+    name="semaforo",
+    state=ROJO,
+    state_names={ROJO: "ROJO", VERDE: "VERDE", AMBAR: "ÁMBAR"},
+    transitions=[...],
+)
+
+Net(
+    name="buffer",
+    places=[1, 0],
+    place_names={0: "LIBRE", 1: "OCUPADO"},
+    transition_names=["adquirir", "liberar"],
+    transitions=[...],
+)
+```
+
+### Retirar el trazado
+
+```python
+tracer.detach(rt)   # restaura los nodos originales; overhead = cero de nuevo
+```
+
+---
+
 ## Lectura adicional
 
 - **Código fuente**: `python/rxnet/` — runtime (~80 líneas), fsm (~80 líneas), pn (~130 líneas)
