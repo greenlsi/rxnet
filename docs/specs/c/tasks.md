@@ -233,6 +233,53 @@ Tasks are marked as completed when they reflect the current repository state, an
   - [x] 22.2 Reescribir `README.md` raíz
     - Añadir getting-started, tabla FSM vs PN, enlace a ejemplos y specs
 
+- [x] 23. Añadir executors multi-rate y soporte multi-scheduler
+  - [x] 23.1 Implementar `rx_cyclic_exec` — ejecutivo cíclico con tabla de hiperperíodo
+    - Período por nodo (`period_us`), cálculo automático de MCD/MCM, tabla de slots estática
+    - _Requirements: 14.3, 14.4_
+  - [x] 23.2 Implementar `rx_coop_exec` — scheduler cooperativo por deadline
+    - Deadline dinámico por runtime, avance de fase sin acumulación de deriva
+    - _Requirements: 14.3_
+  - [x] 23.3 Implementar `rx_thread_exec` — scheduler paralelo con barreras BSP
+    - Un pthread por nodo, dos barreras generacionales por slot (latch_b, commit_b)
+    - Último nodo del último runtime corre en el hilo llamante (útil para CLI/stdin)
+    - _Requirements: 14.3_
+  - [x] 23.4 Añadir ejemplos 04-mix para FSM y PN (cyclic, coop, threads, y variantes con traza)
+    - Binarios: `fsm_04_mix_{cyclic,coop,threads}` y `pn_04_mix_{cyclic,coop,threads}` (+ `_trace`)
+  - [x] 23.5 Actualizar `c/README.md` con documentación de executors
+
+- [x] 24. Implementar subsistema de trazado (`rxnet/trace.h` + `src/trace.c`)
+  - [x] 24.1 Diseñar buffer circular de eventos con cero overhead cuando está desactivado
+    - Todos los macros expanden a `((void)0)` sin `RX_TRACE_ENABLE`; sin heap; capacidad fija
+  - [x] 24.2 Implementar `rx_trace_init`, `rx_trace_attach`, `rx_trace_export`
+    - Buffer con ring de 16 bytes/evento; exportación en formato binario RXNT
+  - [x] 24.3 Implementar registro de nombres de nodos, estados FSM, lugares y transiciones PN, labels
+    - `rx_trace_set_{node,state,place,trans,label}_name`
+  - [x] 24.4 Añadir eventos de usuario `rx_trace_user`
+  - [x] 24.5 Integrar macros en el tick path: `RX_TRACE_NODE_START/END`, `RX_TRACE_FSM`, `RX_TRACE_PN`
+  - [x] 24.6 Añadir `test_trace.c` (21 tests: ring buffer, attach, integración FSM/PN, exportación, fases)
+  - [x] 24.7 Actualizar `user-c.md` §9 con la API real de trazado
+
+- [x] 25. Añadir abstracción de plataforma (`rxnet/port.h` + ports POSIX / FreeRTOS / Zephyr)
+  - [x] 25.1 Definir API de port: `rx_tick_t`, `rx_tick_now/add_us/compare/sleep_until`,
+    `rx_mutex_t`, `rx_thread_t`, `rx_barrier_t` y sus operaciones
+  - [x] 25.2 Implementar `port/posix.h` — POSIX (Linux/macOS)
+    - `clock_gettime(CLOCK_MONOTONIC)`, `pthread_mutex_t`, trampoline para `pthread_create`
+    - Barrera generacional con `pthread_mutex_t` + `pthread_cond_t`
+  - [x] 25.3 Implementar `port/freertos.h` — FreeRTOS/ESP-IDF
+    - `esp_timer_get_time() × 1000` ns, `SemaphoreHandle_t`, `TaskHandle_t`
+    - Barrera turnstile (semáforo contador para liberar N threads simultáneamente)
+    - Sleep: `vTaskDelay` para ms + busy-wait para sub-ms
+  - [x] 25.4 Implementar `port/zephyr.h` — Zephyr (nRF52/nRF54)
+    - `k_ticks_to_ns_floor64(k_uptime_ticks())`, `struct k_mutex`, `struct k_condvar`
+    - Piscina de stacks estática `K_THREAD_STACK_ARRAY_DEFINE` (requisito de Zephyr)
+    - `k_thread_create` con índice de piscina incremental
+  - [x] 25.5 Migrar `cyclic.c`, `coop.c`, `thread.c` a la API de port
+    - Eliminar `rx_timespec_*` y código POSIX directo; usar `rx_tick_*` y `rx_barrier_*`
+  - [x] 25.6 Migrar `trace.h` para usar `port.h` como fuente de hooks de plataforma
+  - [x] 25.7 Verificar que todos los tests pasan en POSIX tras la migración (96 tests)
+  - [x] 25.8 Documentar integración ESP-IDF y Zephyr en `c/README.md`
+
 ## Notes
 
 - Tasks marked with `*` are optional for early MVP but recommended for robustness.

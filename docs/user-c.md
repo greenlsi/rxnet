@@ -412,280 +412,122 @@ void light_pn_init(void) {
 Esta sección explica cómo rxnet se relaciona con los tres modelos clásicos de
 ejecución en sistemas embebidos y de tiempo real.
 
-### 6.1 Ejecutivo cíclico (Cyclic Executive)
+rxnet incluye tres **executors** que gestionan el timing y el scheduling
+automáticamente. El período de cada runtime se lee de `rt->period_us`, que el
+propio runtime calcula como el MCD de los períodos de sus nodos.
 
-#### Qué es
+### 6.1 Ejecutivo cíclico — `rx_cyclic_exec`
 
-Un ejecutivo cíclico es el modelo más simple de concurrencia: un único hilo
-de ejecución que repite la misma secuencia de tareas indefinidamente, con un
-período fijo.
-
-#### rxnet ES un ejecutivo cíclico
-
-El bucle principal de cualquier ejemplo rxnet *es* un ejecutivo cíclico:
+Tabla de despacho estática con hiperperíodo. Un único hilo, orden de slots
+determinista. Adecuado para bare-metal y configuraciones RTOS simples.
 
 ```c
-#include <time.h>
-#include "rxnet/runtime.h"
+#include "rxnet/cyclic.h"
 
-#define PERIOD_NS 10000000L  /* 10 ms */
-
-void app_main(rx_runtime *rt) {
-    struct timespec next;
-    clock_gettime(CLOCK_MONOTONIC, &next);
-
-    for (;;) {
-        rx_tick(rt);
-
-        next.tv_nsec += PERIOD_NS;
-        if (next.tv_nsec >= 1000000000L) {
-            next.tv_sec++;
-            next.tv_nsec -= 1000000000L;
-        }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
-    }
-}
+rx_cyclic_exec ce;
+rx_cyclic_exec_init(&ce);
+rx_cyclic_exec_add(&ce, &fast_rt.runtime);   /* período 10 ms */
+rx_cyclic_exec_add(&ce, &slow_rt.runtime);   /* período 20 ms */
+rx_cyclic_exec_run(&ce);  /* nunca retorna */
 ```
 
-Cada nodo registrado en el runtime es una "tarea" del ejecutivo. El orden de
-registro determina el orden de ejecución dentro del frame:
+El executor calcula automáticamente:
+- `base = MCD(10, 20) = 10 ms` → período base
+- `hyper = MCM(10, 20) = 20 ms` → 2 slots
+- Slot 0: `fast_rt` + `slow_rt`; Slot 1: solo `fast_rt`
+
+**Cuándo usarlo**: periodos fijos conocidos en compilación, determinismo máximo.
+
+**Limitaciones**: todos los períodos deben ser múltiplos enteros del MCD.
+
+### 6.2 Multitarea cooperativa — `rx_coop_exec`
+
+Scheduling dinámico por deadline. Un único hilo comprueba qué runtime tiene el
+deadline más próximo y lo ejecuta. No requiere que los períodos sean múltiplos
+entre sí.
 
 ```c
-rx_runtime_add_node(&rt, &sensor_machine.node);   /* tarea 1 */
-rx_runtime_add_node(&rt, &control_machine.node);  /* tarea 2: ve estado de tarea 1 */
-rx_runtime_add_node(&rt, &actuator_net.node);     /* tarea 3: ve estado de las anteriores */
+#include "rxnet/coop.h"
+
+rx_coop_exec ce;
+rx_coop_exec_init(&ce);
+rx_coop_exec_add(&ce, &rt_a.runtime);   /* período 10 ms */
+rx_coop_exec_add(&ce, &rt_b.runtime);   /* período 15 ms */
+rx_coop_exec_run(&ce);  /* nunca retorna */
 ```
 
-**Ventajas del ejecutivo cíclico**:
+El executor avanza cada deadline desde su último disparo (no desde "ahora"),
+evitando la acumulación de deriva de fase incluso cuando un runtime se retrasa.
 
-- Determinista: mismo orden en cada ciclo
-- Sin overhead de scheduler
-- Sin posibilidad de deadlock o starvation
-- Fácil de analizar temporalmente: si cada tarea tarda ≤ T, el ciclo tarda ≤ N×T
+**Cuándo usarlo**: períodos irregulares, tareas que a veces se alargan un poco,
+sin overhead de threads.
 
-**Limitaciones**:
+**Limitaciones**: una tarea muy lenta puede retrasar a todas las demás.
 
-- Todas las tareas comparten el mismo período
-- Una tarea lenta retrasa todas las demás
-- No hay forma de responder a eventos urgentes a mitad de ciclo
+### 6.3 Threads paralelos — `rx_thread_exec`
 
-#### Multi-rate: múltiples runtimes a distintas velocidades
+Un pthread por nodo. Dos barreras BSP por slot sincronizan las fases reactivas
+con verdadero paralelismo:
+
+- `latch_b[s]`: todos los nodos activos en el slot `s` llegan → latch y eval en paralelo.
+- `commit_b[s]`: todas las evaluaciones terminan → commit en paralelo.
+
+El último nodo del último runtime corre en el hilo llamante (útil para el nodo CLI/stdin).
 
 ```c
-rx_runtime fast_rt, slow_rt;
-int tick_count = 0;
+#include "rxnet/thread.h"
 
-/* ... inicializar ambos runtimes ... */
-
-for (;;) {
-    rx_tick(&fast_rt);           /* siempre: 10 ms */
-    if (tick_count % 10 == 0)
-        rx_tick(&slow_rt);       /* cada 100 ms */
-    tick_count++;
-    sleep_10ms();
-}
+rx_thread_exec te;
+rx_thread_exec_init(&te);
+rx_thread_exec_add(&te, &pn_rt.runtime);   /* nodos PN → threads */
+rx_thread_exec_add(&te, &cli_rt.runtime);  /* CLI → hilo principal */
+rx_thread_exec_run(&te);  /* nunca retorna */
 ```
 
-### 6.2 Multitarea cooperativa (Cooperative Multitasking)
+**Cuándo usarlo**: varios nodos con trabajo de cómputo intensivo que se
+benefician del paralelismo real; sistemas con múltiples cores.
 
-En rxnet, cada nodo *cede implícitamente* al terminar su fase de evaluate.
-El runtime es el scheduler; `rx_tick()` es la ronda de scheduling.
+**Limitaciones**: overhead de sincronización de barreras; requiere `-lpthread`
+en POSIX (o el soporte de tasks equivalente en FreeRTOS/Zephyr).
 
-Una "tarea" puede necesitar **múltiples ticks** para completar su trabajo.
-El estado se modela explícitamente como estado de FSM o como distribución de
-tokens en la PN.
+### 6.4 Resumen comparativo de executors
 
-**Comunicación entre tareas cooperativas**:
+| | `rx_cyclic_exec` | `rx_coop_exec` | `rx_thread_exec` |
+|---|---|---|---|
+| **Threads** | 1 | 1 | 1 por nodo |
+| **Dispatch** | Tabla estática (hiperperíodo) | Deadline dinámico | Barreras BSP |
+| **Períodos** | Múltiplos del MCD | Cualquiera | Cualquiera |
+| **Paralelismo** | No | No | Sí |
+| **Overhead** | Mínimo | Mínimo | Barreras mutex |
+| **Casos típicos** | Bare-metal, RTOS simple | Períodos irregulares | Múltiples cores |
 
-1. **Lugares de PN (tokens como mensajes)** — el productor incrementa
-   `net.places[P_BUFFER]` en su `latch_inputs_cb`; el consumidor dispara
-   la transición que consume ese token.
+### 6.5 Comunicación entre nodos
 
-2. **Estado de FSM como señal** — una máquina puede leer `machine_a.state`
-   directamente en sus guards (el estado ya fue comprometido en la fase commit).
+**Estado de FSM como señal**: un nodo puede leer `machine_a.state` directamente
+en sus guards (el estado fue comprometido en commit, antes de que cualquier nodo
+ejecute el siguiente tick).
 
-3. **Acciones diferidas con enqueue** — cualquier callback puede encolar una
-   acción para la fase deferred del tick actual:
+**Tokens de PN como mensajes**: el productor escribe `net.places[P_BUFFER]` en
+su `latch_inputs_cb`; el consumidor dispara la transición que consume ese token.
+
+**Acciones diferidas**: cualquier callback puede encolar una acción para la
+fase deferred del tick actual:
 
 ```c
 rx_context_enqueue_deferred_action(ctx, my_action_fn, user_ptr);
 ```
 
-| | Ejecutivo cíclico | Multitarea cooperativa |
-|---|---|---|
-| Unidad de trabajo | Todo en un tick | Puede abarcar N ticks |
-| Estado entre ticks | No necesario | Capturado en estados/tokens |
-| Modelo rxnet | Nodos sin estado persistente | FSM / PN con estado |
-
-### 6.3 Threads con prioridades fijas (POSIX / RTOS)
-
-#### rxnet dentro de una tarea RTOS (lo más común)
-
-rxnet corre dentro de una única tarea RTOS. El RTOS gestiona las prioridades
-reales; rxnet gestiona la lógica de la aplicación dentro de su tarea.
-
-**FreeRTOS**:
+Las acciones se ordenan por prioridad (FIFO dentro del mismo nivel):
 
 ```c
-static void rxnet_task(void *arg) {
-    rx_runtime *rt = arg;
-    TickType_t last_wake = xTaskGetTickCount();
-
-    for (;;) {
-        rx_tick(rt);
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
-    }
-}
-
-/* Crear la tarea */
-xTaskCreate(rxnet_task, "rxnet", 4096, &rt,
-            tskIDLE_PRIORITY + 2, NULL);
-```
-
-**POSIX (Linux / macOS)**:
-
-```c
-#include <pthread.h>
-#include <time.h>
-
-static void *rxnet_thread(void *arg) {
-    rx_runtime *rt = arg;
-    struct timespec next;
-    clock_gettime(CLOCK_MONOTONIC, &next);
-
-    for (;;) {
-        rx_tick(rt);
-        next.tv_nsec += 10000000L;
-        if (next.tv_nsec >= 1000000000L) {
-            next.tv_sec++;
-            next.tv_nsec -= 1000000000L;
-        }
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
-    }
-    return NULL;
-}
-
-pthread_t tid;
-pthread_create(&tid, NULL, rxnet_thread, &rt);
-```
-
-#### Modelar prioridades dentro de rxnet (sin RTOS)
-
-Los nodos registrados antes se evalúan primero. En PN con semántica
-greedy-sequential, las transiciones declaradas antes tienen prioridad:
-
-```c
-static const rx_pn_arc consume_cpu[] = {{ P_CPU, 1 }};
-static const rx_pn_arc produce_high[] = {{ P_TASK_HIGH, 1 }};
-static const rx_pn_arc produce_low[]  = {{ P_TASK_LOW,  1 }};
-
-static const rx_pn_transition transitions[] = {
-    /* Alta prioridad: declarada primero */
-    { consume_cpu, 1, produce_high, 1, high_prio_ready, NULL },
-    /* Baja prioridad: solo dispara si la alta no consumió el token */
-    { consume_cpu, 1, produce_low,  1, low_prio_ready,  NULL },
-};
-```
-
-**Nota importante**: rxnet modela la **política** de scheduling; el SO/RTOS
-implementa el **mecanismo** de preempción real.
-
-### 6.4 Acciones diferidas asíncronas (worker pool)
-
-Por defecto, la fase deferred ejecuta todas las acciones encoladas de forma
-síncrona, en orden de prioridad, antes de continuar con dump. Para acciones
-de larga duración que no deben bloquear el tick, rxnet expone un vtable
-`rx_worker_pool` que el usuario implementa con el mecanismo de su plataforma.
-
-#### Prioridades en la cola de deferred
-
-Cualquier callback puede encolar una acción con prioridad explícita:
-
-```c
-/* Prioridad por defecto (NORMAL) */
-rx_context_enqueue_deferred_action(ctx, send_data, user_ptr);
-
-/* Prioridad explícita */
 rx_context_enqueue_deferred_action_p(ctx, send_alarm,   user, RX_PRIORITY_CRITICAL);
 rx_context_enqueue_deferred_action_p(ctx, log_event,    user, RX_PRIORITY_NORMAL);
 rx_context_enqueue_deferred_action_p(ctx, update_stats, user, RX_PRIORITY_LOW);
 ```
 
-| Nivel | Valor | Uso típico |
-|---|---|---|
-| `RX_PRIORITY_CRITICAL` | 3 | Alarmas, paradas de emergencia |
-| `RX_PRIORITY_HIGH` | 2 | Control en tiempo real |
-| `RX_PRIORITY_NORMAL` | 1 | Lógica de aplicación (defecto) |
-| `RX_PRIORITY_LOW` | 0 | Telemetría, logging, estadísticas |
-
-En modo síncrono (sin worker pool), las acciones se ordenan por prioridad
-antes de ejecutarse (FIFO dentro del mismo nivel de prioridad).
-
-#### Worker pool asíncrono (interfaz de vtable)
-
-rxnet no incluye una implementación de worker pool: provee el vtable
-`rx_worker_pool` que el usuario implementa con el mecanismo de su plataforma
-(FreeRTOS queue, POSIX thread pool, etc.).
-
-```c
-#include "rxnet/runtime.h"
-
-/* Implementación de ejemplo con POSIX (simplificada) */
-typedef struct {
-    rx_worker_pool base;   /* DEBE ser el primer campo */
-    /* ... estado interno del pool ... */
-} my_posix_pool;
-
-static void my_pool_post(rx_worker_pool *self,
-                          rx_deferred_action_fn fn,
-                          rx_context *ctx,
-                          void *user,
-                          rx_priority_t priority)
-{
-    my_posix_pool *p = (my_posix_pool *)self;
-    /* encolar {fn, ctx, user, priority} en la cola del pool */
-    posix_pool_submit(p, fn, ctx, user, (int)priority);
-}
-
-static my_posix_pool g_pool = {
-    .base = { .post = my_pool_post },
-    /* ... */
-};
-
-/* Registrar el pool en el runtime */
-rx_runtime_set_worker_pool(&rt, &g_pool.base);
-
-/* A partir de aquí, rx_tick() publica las acciones al pool
- * y retorna inmediatamente sin esperar a que terminen. */
-rx_tick(&rt);
-```
-
-Con un worker pool activo, `rx_tick()` **no bloquea** en la fase deferred:
-llama a `pool->post()` para cada acción y pasa directamente a dump.
-Los resultados llegan a las entradas del contexto en el siguiente latch.
-
-```c
-/* Quitar el pool (volver a modo síncrono) */
-rx_runtime_set_worker_pool(&rt, NULL);
-```
-
-#### Nota sobre thread safety
-
-`rx_tick()` no es thread-safe: solo un hilo puede llamarlo para un runtime
-dado. La sincronización entre el hilo del tick y los workers del pool es
-responsabilidad del usuario (p. ej. escribir resultados en `ctx` con una
-variable atómica, o protegerlos con un mutex antes de leer en la fase latch).
-
-### 6.5 Resumen comparativo
-
-| Modelo | rxnet cómo lo implementa | Limitación |
-|---|---|---|
-| **Ejecutivo cíclico** | `rx_tick()` en bucle con `clock_nanosleep` | Todas las tareas al mismo período |
-| **Multitarea cooperativa** | Estado en FSM/PN, tokens como mensajes | Sin preempción real |
-| **Prioridad por policy** | Orden de nodos + greedy-sequential PN | Solo modela la política |
-| **FreeRTOS task** | rxnet dentro de `xTaskCreate` | El RTOS gestiona la preempción real |
-| **Multi-rate** | Múltiples runtimes a distintas frecuencias | Major/minor frames manuales |
-| **Acciones asíncronas** | `rx_runtime_set_worker_pool()` + vtable | El usuario provee la implementación del pool |
+**Nota sobre thread safety**: `rx_tick()` no es thread-safe por sí mismo. Con
+`rx_thread_exec`, las barreras garantizan la consistencia del snapshot; con los
+otros executors (hilo único) no se necesita sincronización adicional.
 
 ---
 
@@ -920,10 +762,9 @@ static void dump_cb(rx_fsm_context *ctx, void *user) {
 ## 9. Depuración y trazado
 
 rxnet incluye un subsistema de trazado **completamente opcional**: cuando no se
-activa, genera **cero código y cero datos**. Los macros se expanden a `((void)0)`,
-los campos extra de las estructuras no existen, y el enlazador no incluye ningún
-símbolo relacionado. No hay rama de comprobación, no hay puntero a `NULL`, no
-hay coste en el camino caliente.
+activa, genera **cero código y cero datos**. Todos los macros se expanden a
+`((void)0)`, los campos extra de los nodos no existen, y el enlazador no incluye
+ningún símbolo relacionado.
 
 ### Activar en tiempo de compilación
 
@@ -931,110 +772,97 @@ hay coste en el camino caliente.
 CFLAGS += -DRX_TRACE_ENABLE
 ```
 
-Sin ese flag, el código de producción es exactamente el mismo que sin el
-subsistema. Con él, se añaden:
-
-- Un buffer circular de eventos embebido en `rx_runtime_t` (sin heap).
-- Llamadas a macros de trazado en el runtime, `rx_fsm_tick()` y
-  `rx_pn_tick()`.
-- Un callback de drenado configurable para extraer los datos (UART, USB CDC,
-  TCP, fichero…).
+Con este flag, `rx_node` gana dos campos (`trace` y `trace_nid`), y el runtime
+registra eventos `NODE_START/END`, transiciones FSM y disparos PN en un buffer
+circular de capacidad fija (sin heap).
 
 ### Uso básico
 
 ```c
 #include "rxnet/trace.h"
 
-/* Callback de drenado: recibe los bytes del buffer y los envía por donde sea */
-static void drain_cb(const uint8_t *data, size_t len, void *arg) {
-    fwrite(data, 1, len, (FILE *)arg);
-}
+rx_trace_buf_t tracer;
 
-int main(void) {
-    rx_runtime_t rt;
-    rx_runtime_init(&rt);
+/* 1. Inicializar el buffer (phases=0: sin eventos de fase; =1: con ellos) */
+rx_trace_init(&tracer, 0);
 
-    /* Habilitar trazado antes del primer tick */
-    rx_trace_enable(&rt, drain_cb, stdout);
+/* 2. Adjuntar a cada nodo que quieras trazar */
+rx_trace_attach(&tracer, &light_machine.node, 0);   /* nid = 0 */
+rx_trace_attach(&tracer, &blink_machine.node, 1);   /* nid = 1 */
 
-    /* ... añadir nodos y ejecutar ticks ... */
-}
+/* 3. Registrar nombres (opcional, para el informe HTML) */
+rx_trace_set_node_name (&tracer, 0, "light");
+rx_trace_set_state_name(&tracer, 0, STATE_OFF, "OFF");
+rx_trace_set_state_name(&tracer, 0, STATE_ON,  "ON");
+
+rx_trace_set_node_name (&tracer, 1, "blink");
+rx_trace_set_state_name(&tracer, 1, BLINK_SLOW, "SLOW");
+rx_trace_set_state_name(&tracer, 1, BLINK_FAST, "FAST");
+
+/* 4. Ejecutar el sistema normalmente... */
+
+/* 5. Exportar a fichero binario */
+rx_trace_export(&tracer, "trace.rxnt");
 ```
 
-El buffer circular se drena automáticamente cada vez que se llena (o manualmente
-con `rx_trace_drain()`), enviando los datos al callback en el formato binario
-estándar de rxnet.
+Para redes de Petri, registrar también lugares y transiciones:
 
-### Visualizar desde el Mac de desarrollo
-
-Una vez que tienes el fichero binario (o lo recibes por TCP/UART), ejecuta el
-decodificador Python desde el Mac:
-
-```bash
-python -m rxnet.tools.trace trace.bin --report trace.html --open
-python -m rxnet.tools.trace trace.bin --stats          # WCRT por nodo en texto
-python -m rxnet.tools.trace trace.bin --perfetto out.json
+```c
+rx_trace_set_node_name (&tracer, 2, "blink_pn");
+rx_trace_set_place_name(&tracer, 2, P_OFF,    "OFF");
+rx_trace_set_place_name(&tracer, 2, P_ON,     "ON");
+rx_trace_set_trans_name(&tracer, 2, T_TOGGLE, "toggle");
 ```
 
-O si el target expone el buffer vía TCP:
+### Trazado de fases
 
-```bash
-python -m rxnet.tools.trace http://target:7777 --report trace.html --open
+Pasar `phases=1` a `rx_trace_init` registra el inicio y fin de cada fase
+(latch / eval / commit / dump), permitiendo medir cuánto tarda cada una:
+
+```c
+rx_trace_init(&tracer, 1);  /* phases activadas */
 ```
-
-El informe HTML contiene:
-
-- **Diagramas DOT** de cada FSM y red de Petri (renderizados en el navegador
-  con Graphviz/WASM, sin instalación adicional).
-- **Tabla WCRT** — tiempo de respuesta en caso peor por nodo.
-- **Botón Perfetto** — abre la traza en [ui.perfetto.dev](https://ui.perfetto.dev),
-  una línea de tiempo interactiva donde se pueden ver activaciones, transiciones,
-  duraciones de fase y eventos de usuario.
-
-### Trazado de fases (para docencia)
-
-Activar con el flag adicional:
-
-```makefile
-CFLAGS += -DRX_TRACE_ENABLE -DRX_TRACE_PHASES
-```
-
-Se registra el inicio y fin de cada fase (latch / evaluate / commit / dump),
-lo que permite medir cuánto tarda cada una y visualizarlo en Perfetto.
 
 ### Eventos de usuario
 
-Desde cualquier parte del código (incluidas ISR):
+Desde cualquier parte del código:
 
 ```c
-RX_TRACE_USER(&rt, LABEL_TEMPERATURA, 42);
-RX_TRACE_USER(&rt, LABEL_ALARMA, 1);
+/* lid = label id (0..RX_TRACE_MAX_LABELS-1); value = uint16_t */
+rx_trace_user(&tracer, 0, 42);
+
+/* Registrar el nombre del label */
+rx_trace_set_label_name(&tracer, 0, "temperatura");
 ```
 
-`LABEL_*` son constantes `uint16_t` definidas por la aplicación. Aparecen en la
-línea de tiempo de Perfetto como eventos instantáneos globales.
+### Visualizar desde el Mac de desarrollo
 
-### Nombres de estados y lugares
+Una vez que tienes el fichero `.rxnt`, ejecuta el decodificador Python:
 
-Para que los diagramas y la traza muestren nombres legibles, usa el macro
-`RX_FSM_T` (en lugar del inicializador estándar) al declarar las transiciones:
+```bash
+python -m rxnet.tools.trace trace.rxnt --report trace.html --open
+python -m rxnet.tools.trace trace.rxnt --stats          # WCRT por nodo en texto
+python -m rxnet.tools.trace trace.rxnt --perfetto out.json
+```
+
+El informe HTML contiene diagramas de cada FSM/PN y una tabla WCRT. El fichero
+Perfetto se puede abrir en [ui.perfetto.dev](https://ui.perfetto.dev) para ver
+la línea de tiempo interactiva.
+
+### Hooks de plataforma
+
+Por defecto el trazado usa el reloj y el mutex de `rxnet/port.h` (POSIX,
+FreeRTOS o Zephyr según la plataforma destino). Se pueden sobreescribir antes
+de incluir `trace.h`:
 
 ```c
-static const rx_fsm_transition_t trans[] = {
-    RX_FSM_T(ROJO, VERDE,  guard_boton, NULL, "arrancar"),
-    RX_FSM_T(VERDE, ROJO,  NULL,        NULL, "parar"),
-};
+#define RX_TRACE_NOW_NS()          my_platform_clock_ns()
+#define RX_TRACE_LOCK_TYPE         my_lock_t
+#define RX_TRACE_LOCK_INIT(lk)     my_lock_init(&(lk))
+#define RX_TRACE_LOCK_ACQUIRE(lk)  my_lock_acquire(&(lk))
+#define RX_TRACE_LOCK_RELEASE(lk)  my_lock_release(&(lk))
+#include "rxnet/trace.h"
 ```
-
-El campo de nombre de transición solo existe cuando `RX_TRACE_ENABLE` está
-definido; en producción la estructura es la misma de siempre.
-
-### Seguridad en ISR
-
-Todos los macros de trazado son seguros en ISR. La sección crítica usa el hook
-`RX_TRACE_CRITICAL_ENTER` / `RX_TRACE_CRITICAL_EXIT`, que por defecto emplea
-`PRIMASK` en ARM Cortex-M y un spinlock atómico en POSIX. Se puede redefinir
-para cualquier plataforma.
 
 ---
 
