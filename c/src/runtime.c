@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "rxnet/runtime.h"
+#include "rxnet/trace.h"
 
 static void rx_runtime_noop_node_phase(rx_node *node, rx_context *ctx) {
     (void)node;
@@ -394,19 +395,33 @@ int rx_tick(rx_runtime *rt) {
 
     if (rt->nslots == 0) {
         /* Unscheduled / manual-tick mode: run all nodes. */
-        for (i = 0; i < rt->node_count; ++i)
-            rt->nodes[i].node->vtable->latch_inputs(rt->nodes[i].node, rt->ctx);
-
-        for (i = 0; i < rt->node_count; ++i)
-            rt->nodes[i].node->vtable->evaluate(rt->nodes[i].node, rt->ctx);
-
-        for (i = 0; i < rt->node_count; ++i)
-            rt->nodes[i].node->vtable->commit(rt->nodes[i].node, rt->ctx);
-
+        for (i = 0; i < rt->node_count; ++i) {
+            rx_node *node = rt->nodes[i].node;
+            RX_TRACE_NODE_START(node);
+            RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
+            node->vtable->latch_inputs(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
+        }
+        for (i = 0; i < rt->node_count; ++i) {
+            rx_node *node = rt->nodes[i].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
+            node->vtable->evaluate(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
+        }
+        for (i = 0; i < rt->node_count; ++i) {
+            rx_node *node = rt->nodes[i].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
+            node->vtable->commit(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
+        }
         rx_context_dispatch_deferred(rt->ctx);
-
-        for (i = 0; i < rt->node_count; ++i)
-            rt->nodes[i].node->vtable->dump_outputs(rt->nodes[i].node, rt->ctx);
+        for (i = 0; i < rt->node_count; ++i) {
+            rx_node *node = rt->nodes[i].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
+            node->vtable->dump_outputs(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
+            RX_TRACE_NODE_END(node);
+        }
 
     } else {
         /* Scheduled mode: run only active nodes for the current slot, EDF order. */
@@ -415,24 +430,31 @@ int rx_tick(rx_runtime *rt) {
 
         for (j = 0; j < (size_t)slot->count; ++j) {
             rx_node *node = rt->nodes[slot->node_idx[j]].node;
+            RX_TRACE_NODE_START(node);
+            RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
             node->vtable->latch_inputs(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
         }
         for (j = 0; j < (size_t)slot->count; ++j) {
             rx_node *node = rt->nodes[slot->node_idx[j]].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
             node->vtable->evaluate(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
         }
         for (j = 0; j < (size_t)slot->count; ++j) {
             rx_node *node = rt->nodes[slot->node_idx[j]].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
             node->vtable->commit(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
         }
-
         rx_context_dispatch_deferred(rt->ctx);
-
         for (j = 0; j < (size_t)slot->count; ++j) {
             rx_node *node = rt->nodes[slot->node_idx[j]].node;
+            RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
             node->vtable->dump_outputs(node, rt->ctx);
+            RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
+            RX_TRACE_NODE_END(node);
         }
-
         rt->current_slot = (rt->current_slot + 1) % rt->nslots;
     }
 

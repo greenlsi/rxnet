@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "rxnet/config.h"
 
@@ -85,6 +86,10 @@ struct rx_node {
     const rx_node_vtable *vtable;
     rx_node_phase_fn latch_inputs_cb;
     rx_node_phase_fn dump_outputs_cb;
+#ifdef RX_TRACE_ENABLE
+    struct rx_trace_buf *trace;  /* NULL = not traced; set by rx_trace_attach() */
+    uint8_t              trace_nid;
+#endif
 };
 
 /* ------------------------------------------------------------------ */

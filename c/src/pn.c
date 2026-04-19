@@ -1,4 +1,5 @@
 #include "rxnet/pn.h"
+#include "rxnet/trace.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -107,7 +108,7 @@ static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
         if (!net->fire_flags[t]) {
             continue;
         }
-
+        RX_TRACE_PN(node, (uint16_t)t);
         if (net->transitions[t].action != NULL) {
             rx_context_enqueue_deferred_action(ctx, net->transitions[t].action, net->user);
         }
