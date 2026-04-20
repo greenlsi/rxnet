@@ -3,6 +3,10 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude -D_POSIX_C_SOURCE=200809L
 EXAMPLE_CFLAGS ?= $(CFLAGS) -Wno-unused-parameter
 BUILD_DIR ?= build
 
+# GNU ld requires static archives after the objects that reference them.
+# link_src strips $(LIB) from $^ so recipes can append it explicitly at the end.
+link_src = $(filter-out $(LIB),$^)
+
 LIB          := $(BUILD_DIR)/librxnet.a
 LIB_OBJS     := $(BUILD_DIR)/runtime.o $(BUILD_DIR)/fsm.o $(BUILD_DIR)/pn.o \
                 $(BUILD_DIR)/cyclic.o $(BUILD_DIR)/coop.o $(BUILD_DIR)/thread.o
@@ -93,22 +97,22 @@ examples: fsm_01_light fsm_02_auto fsm_03_blink fsm_04_mix_cyclic fsm_04_mix_thr
 fsm_01_light: $(FSM_01_LIGHT_BIN)
 
 $(FSM_01_LIGHT_BIN): $(LIB) examples/fsm/01-light/app_driver.c examples/fsm/01-light/light_fsm.c examples/fsm/01-light/cli_fsm.c examples/fsm/01-light/main_cli.c | $(BUILD_DIR)
-	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
+	$(CC) $(EXAMPLE_CFLAGS) $(link_src) $(LIB) -o $@
 
 fsm_02_auto: $(FSM_02_AUTO_BIN)
 
 $(FSM_02_AUTO_BIN): $(LIB) examples/fsm/02-auto/app_driver.c examples/fsm/02-auto/auto_fsm.c examples/fsm/02-auto/cli_fsm.c examples/fsm/02-auto/main_cli.c | $(BUILD_DIR)
-	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
+	$(CC) $(EXAMPLE_CFLAGS) $(link_src) $(LIB) -o $@
 
 fsm_03_blink: $(FSM_03_BLINK_BIN)
 
 $(FSM_03_BLINK_BIN): $(LIB) examples/fsm/03-blink/app_driver.c examples/fsm/03-blink/blink_fsm.c examples/fsm/03-blink/cli_fsm.c examples/fsm/03-blink/main_cli.c | $(BUILD_DIR)
-	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
+	$(CC) $(EXAMPLE_CFLAGS) $(link_src) $(LIB) -o $@
 
 fsm_04_mix_cyclic: $(FSM_04_MIX_BIN)
 
 $(FSM_04_MIX_BIN): $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c examples/fsm/04-mix/main_cyclic.c | $(BUILD_DIR)
-	$(CC) $(EXAMPLE_CFLAGS) $^ -o $@
+	$(CC) $(EXAMPLE_CFLAGS) $(link_src) $(LIB) -o $@
 
 MIX_SHARED := $(LIB) examples/fsm/04-mix/app_driver.c examples/fsm/04-mix/light_fsm.c examples/fsm/04-mix/blink_fsm.c examples/fsm/04-mix/auto_fsm.c examples/fsm/04-mix/cli_fsm.c
 MIX_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/04-mix
@@ -116,12 +120,12 @@ MIX_FLAGS  := $(EXAMPLE_CFLAGS) -Iexamples/fsm/04-mix
 fsm_04_mix_threads: $(FSM_04_MIX_THREADS_BIN)
 
 $(FSM_04_MIX_THREADS_BIN): $(MIX_SHARED) examples/fsm/04-mix/main_threads.c | $(BUILD_DIR)
-	$(CC) $(MIX_FLAGS) $^ -o $@ -lpthread
+	$(CC) $(MIX_FLAGS) $(link_src) $(LIB) -o $@ -lpthread
 
 fsm_04_mix_coop: $(FSM_04_MIX_COOP_BIN)
 
 $(FSM_04_MIX_COOP_BIN): $(MIX_SHARED) examples/fsm/04-mix/main_coop.c | $(BUILD_DIR)
-	$(CC) $(MIX_FLAGS) $^ -o $@
+	$(CC) $(MIX_FLAGS) $(link_src) $(LIB) -o $@
 
 fsm_04_mix_cyclic_trace: $(FSM_04_MIX_CYCLIC_TRACE_BIN)
 
@@ -160,12 +164,12 @@ PN_MIX_FLAGS  := $(PN_CLI_FLAGS) \
 pn_04_mix_threads: $(PN_04_MIX_THREADS_BIN)
 
 $(PN_04_MIX_THREADS_BIN): $(PN_MIX_SHARED) examples/pn/04-mix/main_threads.c | $(BUILD_DIR)
-	$(CC) $(PN_MIX_FLAGS) $^ -o $@ -lpthread
+	$(CC) $(PN_MIX_FLAGS) $(link_src) $(LIB) -o $@ -lpthread
 
 pn_04_mix_coop: $(PN_04_MIX_COOP_BIN)
 
 $(PN_04_MIX_COOP_BIN): $(PN_MIX_SHARED) examples/pn/04-mix/main_coop.c | $(BUILD_DIR)
-	$(CC) $(PN_MIX_FLAGS) $^ -o $@
+	$(CC) $(PN_MIX_FLAGS) $(link_src) $(LIB) -o $@
 
 pn_04_mix_cyclic_trace: $(PN_04_MIX_CYCLIC_TRACE_BIN)
 
@@ -214,21 +218,21 @@ pn_01_light: $(PN_01_LIGHT_BIN)
 $(PN_01_LIGHT_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/01-light/light_pn.c \
     examples/pn/01-light/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/01-light $^ -o $@
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/01-light $(link_src) $(LIB) -o $@
 
 pn_02_auto: $(PN_02_AUTO_BIN)
 
 $(PN_02_AUTO_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/02-auto/auto_pn.c \
     examples/pn/02-auto/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/02-auto $^ -o $@
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/02-auto $(link_src) $(LIB) -o $@
 
 pn_03_blink: $(PN_03_BLINK_BIN)
 
 $(PN_03_BLINK_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/03-blink/blink_pn.c \
     examples/pn/03-blink/main_cli.c | $(BUILD_DIR)
-	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/03-blink $^ -o $@
+	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/03-blink $(link_src) $(LIB) -o $@
 
 pn_04_mix: $(PN_04_MIX_BIN)
 
@@ -241,7 +245,7 @@ $(PN_04_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
 	    -Iexamples/pn/01-light \
 	    -Iexamples/pn/02-auto \
 	    -Iexamples/pn/03-blink \
-	    $^ -o $@
+	    $(link_src) $(LIB) -o $@
 
 mixed: $(MIXED_BIN)
 
@@ -252,7 +256,7 @@ $(MIXED_BIN): $(LIB) $(PN_CLI_SHARED) \
 	$(CC) $(PN_CLI_FLAGS) \
 	    -Iexamples/fsm/01-light \
 	    -Iexamples/pn/01-light \
-	    $^ -o $@
+	    $(link_src) $(LIB) -o $@
 
 # ------------------------------------------------------------------ #
 # Tests                                                                #
