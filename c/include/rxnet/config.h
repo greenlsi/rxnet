@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #define RXNET_VERSION       "1.0.0"

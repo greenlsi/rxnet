@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """PN 04-mix — BSP thread-per-node executor.
 
 Same scenario as ``main.py`` but driven by ``ThreadExecutive``.

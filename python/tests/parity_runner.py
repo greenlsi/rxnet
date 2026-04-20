@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """parity_runner.py — Python-side conformance runner.
 
 Runs the same fixed scenarios as ``c/tests/parity_runner.c`` and prints one

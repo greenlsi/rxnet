@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Tests for rxnet.runtime — equivalent to tests/test_runtime.c."""
 from __future__ import annotations
 

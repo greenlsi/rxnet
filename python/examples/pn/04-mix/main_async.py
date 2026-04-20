@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """PN 04-mix — async variant (cooperative multitasking with asyncio).
 
 Two asyncio Tasks run at different periods, yielding at every

@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Non-blocking CLI helper for the interactive examples.
 
 A background thread reads lines from stdin.  Each call to ``Cli.tick()``

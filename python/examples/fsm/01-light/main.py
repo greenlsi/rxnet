@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """FSM 01-light — interactive CLI demo.
 
 Three lights (A, B, C).  A and B are controlled by button A.  C is

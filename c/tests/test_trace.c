@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /* test_trace.c — unit tests for rxnet/trace.h + trace.c.
  *
  * Compiled with -DRX_TRACE_ENABLE.

@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Auto PN — button turns light on; auto-off after timeout.
 
 Places: P_OFF, P_ON, P_REQUEST, P_AUTO_OFF_DUE.

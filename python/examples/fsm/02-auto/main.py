@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """FSM 02-auto — interactive CLI demo.
 
 Three lights (A, B, C) with auto-off timers.

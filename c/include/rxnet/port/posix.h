@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /*
  * rxnet/port/posix.h — POSIX port (Linux, macOS, POSIX-compliant systems).
  *

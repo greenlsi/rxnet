@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """rxnet.cyclic — Cyclic executive with hyperperiod dispatch table.
 
 A cyclic executive runs runtimes at fixed periods using a static dispatch

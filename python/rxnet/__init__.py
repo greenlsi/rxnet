@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 from . import coop, cyclic, fsm, pn, runtime, thread, worker_pool
 from .coop import CoopExecutive
 from .cyclic import CyclicExecutive, sleep_until

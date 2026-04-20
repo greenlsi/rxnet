@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /*
  * PN 04-mix — cyclic executive with per-net periods + tracing.
  *

@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /* rxnet/trace.c — optional tracing subsystem implementation.
  *
  * Compiled only when RX_TRACE_ENABLE is defined.  The Makefile passes

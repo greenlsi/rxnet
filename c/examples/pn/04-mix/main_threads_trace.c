@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /*
  * PN 04-mix — parallel thread-per-node scheduler + tracing.
  *

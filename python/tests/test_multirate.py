@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Tests for multi-rate scheduling: Runtime.build(), per-node period_us,
 CyclicExecutive, CoopExecutive, and ThreadExecutive.
 

@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Blink PN — three-state blinking light using a Petri net.
 
 Places: P_OFF, P_X1, P_X2, P_REQUEST, P_TOGGLE_DUE.

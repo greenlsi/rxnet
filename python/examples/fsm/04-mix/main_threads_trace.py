@@ -1,28 +1,21 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
 # SPDX-License-Identifier: MIT
 
-"""FSM 04-mix — cyclic executive with hyperperiod dispatch table.
+"""FSM 04-mix — BSP thread-per-node executor with Perfetto tracing.
 
-All three machines share a single runtime; periods are registered
-per-machine::
+Same scenario as ``main_threads.py`` plus ``Tracer`` attached before ``run()``.
 
-    light_a  10 ms
-    blink_b  10 ms
-    auto_c   20 ms
-    cli_node 10 ms
+- ``GET http://localhost:7777/trace`` downloads the live binary trace.
+- Type ``trace`` at the prompt to save ``trace.bin`` locally.
+- Open with Perfetto (https://ui.perfetto.dev) or convert to HTML::
 
-The runtime builds the hyperperiod table:
-    base  = GCD(10, 10, 20, 10) = 10 ms
-    hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
-
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nodes scheduled for that slot.
+    python -m rxnet.tools.trace trace.bin --report report.html --open
+    python -m rxnet.tools.trace http://localhost:7777 --report report.html --open
 
 Usage::
 
     cd python
-    uv run examples/fsm/04-mix/main.py
+    uv run examples/fsm/04-mix/main_threads_trace.py
 """
 from __future__ import annotations
 
@@ -36,9 +29,10 @@ sys.path.insert(0, str(Path(examples_root) / "fsm" / "01-light"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "02-auto"))
 sys.path.insert(0, str(Path(examples_root) / "fsm" / "03-blink"))
 
-from rxnet.cyclic import CyclicExecutive
+from rxnet.thread import ThreadExecutive
 from rxnet.fsm import Machine, Runtime
 from rxnet.runtime import Context
+from rxnet.trace import Tracer
 
 import app_driver
 from cli import Cli
@@ -66,12 +60,8 @@ SLOW_PERIOD_US = 20_000
 CLI_PERIOD_US  = 10_000
 
 
-# ------------------------------------------------------------------ #
-# CLI node wrapper                                                     #
-# ------------------------------------------------------------------ #
-
 class CliNode:
-    """Wraps Cli as a Runtime Node.  Dispatches one command per dump phase."""
+    """Wraps Cli as a Runtime Node.  Added last → runs in main thread."""
 
     def __init__(self, cli: Cli) -> None:
         self._cli = cli
@@ -88,10 +78,6 @@ class CliNode:
     def dump_outputs(self, ctx: Context) -> None:
         self._cli.tick()
 
-
-# ------------------------------------------------------------------ #
-# CLI command handlers                                                 #
-# ------------------------------------------------------------------ #
 
 def _light_state(state: int) -> str:
     return "ON" if state == LIGHT_STATE_ON else "OFF"
@@ -181,19 +167,28 @@ def cmd_timeout(line: str, machines: tuple[Machine, Machine, Machine]) -> None:
         print("failed to update auto timeout (C)")
 
 
+def cmd_trace(line: str, tracer: Tracer) -> None:
+    path = "trace.bin"
+    tracer.export(path)
+    print(f"trace saved → {path}")
+    print("  open:    python -m rxnet.tools.trace trace.bin --report report.html --open")
+    print("  or live: python -m rxnet.tools.trace http://localhost:7777 --report report.html --open")
+
+
 def cmd_quit(line: str, user: object) -> None:
     print("bye")
     sys.exit(0)
 
 
-# ------------------------------------------------------------------ #
-# Main                                                                 #
-# ------------------------------------------------------------------ #
-
 def main() -> None:
     light_a = create_light_fsm(BUTTON_A_GPIO, LIGHT_A_GPIO)
     blink_b = create_blink_fsm(BUTTON_A_GPIO, LIGHT_B_GPIO, DEFAULT_FREQ_B_HZ)
     auto_c  = create_auto_fsm(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
+
+    # Human-readable state names appear in the Perfetto trace.
+    light_a.state_names = {0: "OFF", 1: "ON"}
+    blink_b.state_names = {0: "OFF", 1: "X1", 2: "X2"}
+    auto_c.state_names  = {0: "OFF", 1: "ON"}
 
     cli = Cli()
     machines = (light_a, blink_b, auto_c)
@@ -213,21 +208,28 @@ def main() -> None:
 
     cli_node = CliNode(cli)
 
-    # All nodes in a single runtime — periods registered per-node.
-    # The runtime builds the hyperperiod table (base=10 ms, 2 slots).
+    # cli_node added last → ThreadExecutive runs it in the main thread.
     rt = Runtime()
     rt.add_machine(light_a,  FAST_PERIOD_US)
     rt.add_machine(blink_b,  FAST_PERIOD_US)
     rt.add_machine(auto_c,   SLOW_PERIOD_US)
     rt.add_node(cli_node,    CLI_PERIOD_US)
 
+    tracer = Tracer(max_events=8192, phases=True)
+    tracer.attach(rt)
+    tracer.serve(port=7777)
+
+    cli.register("trace", cmd_trace, tracer)
+    cli.add_help_line("trace")
+
     cli.print_help()
+    print("trace server: http://localhost:7777/trace")
     cmd_status("status", machines)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
-    ce.add(rt)
-    ce.run()  # never returns
+    te = ThreadExecutive()
+    te.add(rt)
+    te.run()  # never returns — cli_node runs in this (main) thread
 
 
 if __name__ == "__main__":

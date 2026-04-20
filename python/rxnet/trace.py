@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """rxnet.trace — optional, zero-overhead tracing subsystem.
 
 Zero overhead when not in use

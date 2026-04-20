@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Auto FSM — button turns light on; it turns off automatically after a timeout.
 
 Button press while ON resets the timer.

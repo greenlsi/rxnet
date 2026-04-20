@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """rxnet.thread — BSP thread-per-node executor with phase barriers.
 
 One thread per node.  Three ``threading.Barrier`` objects per hyperperiod

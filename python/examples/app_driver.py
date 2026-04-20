@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Simulated GPIO driver — host-side mock for interactive CLI examples.
 
 Mirrors the API of the C ``app_driver.h`` / ``app_driver.c`` (host-mock

@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """PN 02-auto — interactive CLI demo.
 
 Three lights (A, B, C) with auto-off timers.  A and B share button A;

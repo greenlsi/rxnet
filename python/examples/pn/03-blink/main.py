@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """PN 03-blink — interactive CLI demo.
 
 Three blinking lights (A, B, C).  A and B share button A; C uses button B.

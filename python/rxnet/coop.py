@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """rxnet.coop — Cooperative multi-rate scheduler.
 
 Each registered runtime runs when its deadline passes.  After executing,

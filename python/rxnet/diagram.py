@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """rxnet.diagram — Graphviz DOT generation for FSM and Petri Net models.
 
 Functions are pure: they read existing topology from Machine / Net objects

@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Light PN — simple toggle using a Petri net.
 
 Places: P_OFF, P_ON, P_REQUEST.

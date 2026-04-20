@@ -1,3 +1,6 @@
+// Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+// SPDX-License-Identifier: MIT
+
 /*
  * FSM 03-mix — parallel thread-per-node scheduler (BSP barriers).
  *

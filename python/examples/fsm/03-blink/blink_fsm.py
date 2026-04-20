@@ -1,3 +1,6 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+
 """Blink FSM — three-state blinking light.
 
 States: OFF → X1 (blink at base_hz) → X2 (blink at 2×base_hz) → OFF.
