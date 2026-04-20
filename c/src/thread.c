@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "rxnet/thread.h"
+#include "rxnet/trace.h"
 
 /* ------------------------------------------------------------------ */
 /* Node loop                                                            */
@@ -30,13 +31,23 @@ node_loop(rx_thread_arg *a)
         slot = base_tick % rt->nslots;
 
         rx_barrier_wait(&grp->latch_b[slot]);
+        RX_TRACE_NODE_START(node);
+        RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
         node->vtable->latch_inputs(node, ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
+        RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
         node->vtable->evaluate(node, ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
 
         rx_barrier_wait(&grp->commit_b[slot]);
+        RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
         node->vtable->commit(node, ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
         rx_context_dispatch_deferred(ctx);
+        RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
         node->vtable->dump_outputs(node, ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
+        RX_TRACE_NODE_END(node);
 
         next = rx_tick_add_us(next, period_us);
         base_tick += step;
