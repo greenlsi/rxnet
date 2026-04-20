@@ -135,7 +135,7 @@ static int toggle_due(const rx_fsm_context *ctx, void *user) {
            data->now_ms >= data->next_toggle_ms;
 }
 
-static void enter_blink_x1(rx_fsm_context *ctx, void *user) {
+static void enter_x1(rx_fsm_context *ctx, void *user) {
     blink_machine_data *data = (blink_machine_data *)user;
 
     (void)ctx;
@@ -148,7 +148,7 @@ static void enter_blink_x1(rx_fsm_context *ctx, void *user) {
     data->next_toggle_ms = data->now_ms + half_period_ms_for_state(BLINK_STATE_X1, data->base_hz);
 }
 
-static void enter_blink_x2(rx_fsm_context *ctx, void *user) {
+static void enter_x2(rx_fsm_context *ctx, void *user) {
     blink_machine_data *data = (blink_machine_data *)user;
 
     (void)ctx;
@@ -213,8 +213,8 @@ void blink_fsm_create(
     unsigned int base_hz
 ) {
     static const rx_fsm_transition transitions[] = {
-        {BLINK_STATE_OFF, BLINK_STATE_X1, button_pressed, enter_blink_x1},
-        {BLINK_STATE_X1, BLINK_STATE_X2, button_pressed, enter_blink_x2},
+        {BLINK_STATE_OFF, BLINK_STATE_X1, button_pressed, enter_x1},
+        {BLINK_STATE_X1, BLINK_STATE_X2, button_pressed, enter_x2},
         {BLINK_STATE_X1, BLINK_STATE_X1, toggle_due, toggle_light},
         {BLINK_STATE_X2, BLINK_STATE_OFF, button_pressed, enter_off},
         {BLINK_STATE_X2, BLINK_STATE_X2, toggle_due, toggle_light},

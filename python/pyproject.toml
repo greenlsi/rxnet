@@ -10,6 +10,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "pyyaml>=6.0",
 ]
 
 [tool.pytest.ini_options]
@@ -31,3 +32,8 @@ ignore_missing_imports = true
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyyaml>=6.0.3",
+]

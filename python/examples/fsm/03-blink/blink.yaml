@@ -1,0 +1,38 @@
+# Copyright 2026 Jose M. Moya <jm.moya@upm.es>
+# SPDX-License-Identifier: MIT
+#
+# FSM descriptor for the blink machine.
+# Regenerate model and TLA+ spec with:
+#   python -m rxnet.tools.gen blink.yaml \
+#       --py-dir  . \
+#       --c-dir   ../../../../c/examples/fsm/03-blink/ \
+#       --tla-dir ../../../../tlaplus/
+
+name: blink
+
+params:
+  - name: button_gpio
+    type: int
+    ctype: int
+  - name: light_gpio
+    type: int
+    ctype: int
+  - name: base_hz
+    type: int
+    ctype: int
+
+states:
+  - {id: 0, name: OFF}
+  - {id: 1, name: X1}
+  - {id: 2, name: X2}
+
+initial: OFF
+
+transitions:
+  # button cycles:  OFF → X1 → X2 → OFF
+  - {from: OFF, to: X1,  guard: button_pressed, action: enter_x1}
+  - {from: X1,  to: X2,  guard: button_pressed, action: enter_x2}
+  - {from: X2,  to: OFF, guard: button_pressed, action: enter_off}
+  # self-loops driven by the internal blink timer
+  - {from: X1, to: X1, guard: toggle_due, action: toggle_light}
+  - {from: X2, to: X2, guard: toggle_due, action: toggle_light}
