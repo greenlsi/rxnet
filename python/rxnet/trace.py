@@ -33,6 +33,7 @@ import http.server
 import struct
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 # ── event kinds ────────────────────────────────────────────────────────────
@@ -110,6 +111,9 @@ class _Traced:
     """
 
     __slots__ = ("_inner", "_nid", "_buf", "_phases", "_snap_fn", "_delta_fn")
+    # Declared here so mypy accepts heterogeneous assignments in __init__.
+    _snap_fn:  Callable[[], Any]
+    _delta_fn: Callable[[Any], None]
 
     def __init__(self, inner: Any, nid: int, buf: _RingBuf, phases: bool) -> None:
         self._inner  = inner
@@ -175,7 +179,7 @@ class _Traced:
         if curr != prev:
             self._buf.write(_EV_FSM, self._nid, a=prev, b=curr)
 
-    def _pn_delta(self, _prev: None) -> None:
+    def _pn_delta(self, _prev: Any) -> None:
         buf, nid = self._buf, self._nid
         for i, fired in enumerate(self._inner._fire_flags):
             if fired:
@@ -358,6 +362,7 @@ class Tracer:
         parts.append(bytes([len(fsm_entries)]))
         for nid, node in fsm_entries:
             snames = node.state_names  # type: ignore[union-attr]
+            assert snames is not None
             parts.append(bytes([nid, len(snames)]))
             for sid, sname in snames.items():
                 enc = sname.encode()
@@ -370,9 +375,9 @@ class Tracer:
             if isinstance(node, Net)
         ]
         parts.append(bytes([len(pn_entries)]))
-        for nid, node in pn_entries:
-            pnames = node.place_names or {}
-            tnames = node.transition_names or []
+        for nid, pn_node in pn_entries:
+            pnames = pn_node.place_names or {}
+            tnames = pn_node.transition_names or []
             parts.append(bytes([nid, len(pnames), len(tnames)]))
             for pid, pname in pnames.items():
                 enc = pname.encode()

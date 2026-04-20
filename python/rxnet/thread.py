@@ -120,13 +120,13 @@ class ThreadExecutive:
                 else:
                     # Capture ctx in closure via default arg.
                     latch_bs.append(
-                        threading.Barrier(n, action=lambda c=ctx: c.latch_inputs())
+                        threading.Barrier(n, action=lambda c=ctx: c.latch_inputs())  # type: ignore[misc]
                     )
                     commit_bs.append(threading.Barrier(n))
                     dump_bs.append(
                         threading.Barrier(
                             n,
-                            action=lambda c=ctx, wp=rt._worker_pool: c.dispatch_deferred(wp),
+                            action=lambda c=ctx, wp=rt._worker_pool: c.dispatch_deferred(wp),  # type: ignore[misc]
                         )
                     )
 

@@ -449,10 +449,6 @@ def generate_c_model_h(spec: FsmSpec) -> str:
     N = spec.name
     guard_name = f"RXNET_{U}_FSM_MODEL_H"
 
-    ", ".join(
-        "rx_fsm_machine *machine" if i < 0 else f"{p.ctype} {p.name}"
-        for i, p in [(-1, None)] + list(enumerate(spec.params))   # prepend machine*
-    )
     # build proper param sig
     c_params = "rx_fsm_machine *machine"
     if spec.params:
