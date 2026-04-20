@@ -9,16 +9,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import pytest
-from rxnet.fsm import Machine, Runtime as FsmRuntime, Transition as FsmTransition
-from rxnet.pn import Arc, Net, Runtime as PnRuntime, Transition as PnTransition
-from rxnet.runtime import Context
-from rxnet.trace import (
-    Tracer, _RingBuf,
-    _EV_N_START, _EV_N_END, _EV_FSM, _EV_PN, _EV_USER,
-    _EV_PH_START, _EV_PH_END, _PACK,
-)
 from rxnet.diagram import fsm_to_dot, pn_to_dot
+from rxnet.fsm import Machine
+from rxnet.fsm import Runtime as FsmRuntime
+from rxnet.fsm import Transition as FsmTransition
+from rxnet.pn import Arc, Net
+from rxnet.pn import Runtime as PnRuntime
+from rxnet.pn import Transition as PnTransition
+from rxnet.trace import (
+    _EV_FSM,
+    _EV_N_END,
+    _EV_N_START,
+    _EV_PH_END,
+    _EV_PH_START,
+    _EV_PN,
+    _EV_USER,
+    _PACK,
+    Tracer,
+    _RingBuf,
+)
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -407,7 +416,7 @@ class TestFsmDot:
         dot = fsm_to_dot(m, initial_state=ON)
         # The initial arrow should point to ON
         lines = dot.splitlines()
-        start_arrow = next(l for l in lines if "__start ->" in l)
+        start_arrow = next(ln for ln in lines if "__start ->" in ln)
         assert "ON" in start_arrow
 
     def test_no_state_names_fallback(self):

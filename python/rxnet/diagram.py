@@ -90,7 +90,7 @@ def pn_to_dot(net: Net) -> str:
         lines.append(f"    {tname(i)};")
     # arcs
     for i, trans in enumerate(net.transitions):
-        lbl_attr = f' [label={_q(trans.label)} fontsize=10]' if trans.label else ""
+        f' [label={_q(trans.label)} fontsize=10]' if trans.label else ""
         for arc in trans.consume:
             w = f' [label="{arc.weight}" fontsize=10]' if arc.weight != 1 else ""
             lines.append(f"    {pname(arc.place_id)} -> {tname(i)}{w};")

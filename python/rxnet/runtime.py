@@ -7,7 +7,7 @@ import copy
 import math
 import threading
 from concurrent.futures import Executor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .worker_pool import Priority, WorkerPool

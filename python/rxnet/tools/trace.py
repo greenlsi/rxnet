@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import struct
-import sys
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -66,41 +65,57 @@ class _Trace:
 
     def _parse_names(self, blob: bytes, off: int) -> int:
         # node names
-        nc = blob[off]; off += 1
+        nc = blob[off]
+        off += 1
         for _ in range(nc):
-            nlen = blob[off]; off += 1
-            self.node_names.append(blob[off:off + nlen].decode()); off += nlen
+            nlen = blob[off]
+            off += 1
+            self.node_names.append(blob[off:off + nlen].decode())
+            off += nlen
 
         # FSM state names
-        fc = blob[off]; off += 1
+        fc = blob[off]
+        off += 1
         for _ in range(fc):
-            nid, sc = blob[off], blob[off + 1]; off += 2
+            nid, sc = blob[off], blob[off + 1]
+            off += 2
             states: dict[int, str] = {}
             for _ in range(sc):
-                sid, slen = blob[off], blob[off + 1]; off += 2
-                states[sid] = blob[off:off + slen].decode(); off += slen
+                sid, slen = blob[off], blob[off + 1]
+                off += 2
+                states[sid] = blob[off:off + slen].decode()
+                off += slen
             self.fsm_states[nid] = states
 
         # PN names
-        pc = blob[off]; off += 1
+        pc = blob[off]
+        off += 1
         for _ in range(pc):
-            nid, np_, nt = blob[off], blob[off + 1], blob[off + 2]; off += 3
+            nid, np_, nt = blob[off], blob[off + 1], blob[off + 2]
+            off += 3
             places: dict[int, str] = {}
             for _ in range(np_):
-                pid, plen = blob[off], blob[off + 1]; off += 2
-                places[pid] = blob[off:off + plen].decode(); off += plen
+                pid, plen = blob[off], blob[off + 1]
+                off += 2
+                places[pid] = blob[off:off + plen].decode()
+                off += plen
             self.pn_places[nid] = places
             trans: list[str] = []
             for _ in range(nt):
-                tid, tlen = blob[off], blob[off + 1]; off += 2
-                trans.append(blob[off:off + tlen].decode()); off += tlen
+                _tid, tlen = blob[off], blob[off + 1]
+                off += 2
+                trans.append(blob[off:off + tlen].decode())
+                off += tlen
             self.pn_trans[nid] = trans
 
         # user labels
-        lc = blob[off]; off += 1
+        lc = blob[off]
+        off += 1
         for _ in range(lc):
-            lid, llen = blob[off], blob[off + 1]; off += 2
-            self.labels[lid] = blob[off:off + llen].decode(); off += llen
+            lid, llen = blob[off], blob[off + 1]
+            off += 2
+            self.labels[lid] = blob[off:off + llen].decode()
+            off += llen
         return off
 
     def node_name(self, nid: int) -> str:

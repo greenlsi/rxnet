@@ -4,10 +4,8 @@
 """Tests for rxnet.worker_pool — WorkerPool and Priority."""
 from __future__ import annotations
 
-import time
 import threading
-
-import pytest
+import time
 
 from rxnet.worker_pool import Priority, WorkerPool
 

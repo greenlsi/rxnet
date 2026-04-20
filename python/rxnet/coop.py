@@ -35,11 +35,10 @@ Single runtime with multi-rate nodes::
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .cyclic import sleep_until
-
-import time
 
 
 class CoopExecutive:

@@ -119,7 +119,7 @@ class _Traced:
 
         # Bind state-snapshot and delta functions at wrap time.
         from .fsm import Machine
-        from .pn  import Net
+        from .pn import Net
         if isinstance(inner, Machine):
             self._snap_fn  = lambda: inner.state
             self._delta_fn = self._fsm_delta
@@ -135,29 +135,37 @@ class _Traced:
     def latch_inputs(self, ctx: Any) -> None:
         buf, nid = self._buf, self._nid
         buf.write(_EV_N_START, nid)
-        if self._phases: buf.write(_EV_PH_START, nid, a=_PH_LATCH)
+        if self._phases:
+            buf.write(_EV_PH_START, nid, a=_PH_LATCH)
         self._inner.latch_inputs(ctx)
-        if self._phases: buf.write(_EV_PH_END,   nid, a=_PH_LATCH)
+        if self._phases:
+            buf.write(_EV_PH_END, nid, a=_PH_LATCH)
 
     def evaluate(self, ctx: Any) -> None:
         buf, nid = self._buf, self._nid
-        if self._phases: buf.write(_EV_PH_START, nid, a=_PH_EVAL)
+        if self._phases:
+            buf.write(_EV_PH_START, nid, a=_PH_EVAL)
         self._inner.evaluate(ctx)
-        if self._phases: buf.write(_EV_PH_END,   nid, a=_PH_EVAL)
+        if self._phases:
+            buf.write(_EV_PH_END, nid, a=_PH_EVAL)
 
     def commit(self, ctx: Any) -> None:
         buf, nid = self._buf, self._nid
-        if self._phases: buf.write(_EV_PH_START, nid, a=_PH_COMMIT)
+        if self._phases:
+            buf.write(_EV_PH_START, nid, a=_PH_COMMIT)
         prev = self._snap_fn()
         self._inner.commit(ctx)
-        if self._phases: buf.write(_EV_PH_END,   nid, a=_PH_COMMIT)
+        if self._phases:
+            buf.write(_EV_PH_END, nid, a=_PH_COMMIT)
         self._delta_fn(prev)
 
     def dump_outputs(self, ctx: Any) -> None:
         buf, nid = self._buf, self._nid
-        if self._phases: buf.write(_EV_PH_START, nid, a=_PH_DUMP)
+        if self._phases:
+            buf.write(_EV_PH_START, nid, a=_PH_DUMP)
         self._inner.dump_outputs(ctx)
-        if self._phases: buf.write(_EV_PH_END,   nid, a=_PH_DUMP)
+        if self._phases:
+            buf.write(_EV_PH_END, nid, a=_PH_DUMP)
         buf.write(_EV_N_END, nid)
 
     # ── delta detectors (bound at construction) ──────────────────────────
@@ -258,8 +266,8 @@ class Tracer:
         Opens with any browser.  No server or installation needed.
         """
         from .diagram import fsm_to_dot, pn_to_dot
-        from .fsm    import Machine
-        from .pn     import Net
+        from .fsm import Machine
+        from .pn import Net
 
         sections: list[str] = []
         for nid, node in enumerate(self._nodes):

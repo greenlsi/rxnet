@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 /*
+ * clock_gettime() and nanosleep() are POSIX extensions not exposed by
+ * strict C99 mode (-std=c99).  Request POSIX.1-2008 before any system header.
+ */
+#if !defined(_POSIX_C_SOURCE) || _POSIX_C_SOURCE < 200809L
+#  undef  _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200809L
+#endif
+
+/*
  * rxnet/port/posix.h — POSIX port (Linux, macOS, POSIX-compliant systems).
  *
  * Time:    clock_gettime(CLOCK_MONOTONIC) → int64_t nanoseconds

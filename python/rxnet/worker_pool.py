@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import heapq
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable
+from typing import Any
 
 
 class Priority(IntEnum):
@@ -23,7 +24,7 @@ class Priority(IntEnum):
     CRITICAL = 3
 
 
-Action = Callable[["Context", Any], None]  # type: ignore[type-arg]  # forward ref
+Action = Callable[[Any, Any], None]
 
 
 @dataclass(order=True)

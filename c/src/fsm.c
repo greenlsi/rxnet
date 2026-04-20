@@ -39,6 +39,7 @@ static void rx_fsm_machine_commit(rx_node *node, rx_context *ctx) {
 
     machine->state = machine->next_state;
     RX_TRACE_FSM(node, prev, machine->state);
+    (void)prev;   /* suppress -Wunused-variable when tracing is disabled */
 
     if (machine->proposed_action != NULL) {
         rx_context_enqueue_deferred_action(ctx, machine->proposed_action, machine->user);

@@ -83,7 +83,7 @@ import ast
 import re
 import sys
 import textwrap
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -243,7 +243,8 @@ def generate_python_model(spec: FsmSpec) -> str:
         f"# SPDX-License-Identifier: {SPDX}",
         "#",
         "# GENERATED — do not edit by hand.",
-        f"# Source: {spec.name}.yaml   (regenerate with: python -m rxnet.tools.gen {spec.name}.yaml)",
+        f"# Source: {spec.name}.yaml",
+        f"#   regenerate with: python -m rxnet.tools.gen {spec.name}.yaml",
         "",
         f'"""Auto-generated model for the ``{spec.name}`` FSM.',
         "",
@@ -363,7 +364,7 @@ def generate_python_stub(spec: FsmSpec) -> str:
 
     # guards
     if spec.guards:
-        lines.append("# ── guards ───────────────────────────────────────────────────────────────────")
+        lines.append("# ── guards ──────────────────────────────────────────────────────────────")
         lines.append("")
         for g in spec.guards:
             lines += [
@@ -376,7 +377,7 @@ def generate_python_stub(spec: FsmSpec) -> str:
 
     # actions
     if spec.actions:
-        lines.append("# ── actions ──────────────────────────────────────────────────────────────────")
+        lines.append("# ── actions ─────────────────────────────────────────────────────────────")
         lines.append("")
         for a in spec.actions:
             lines += [
@@ -404,7 +405,7 @@ def generate_python_stub(spec: FsmSpec) -> str:
         action_entries,
         "}",
         "",
-        f"_TRANSITIONS = [",
+        "_TRANSITIONS = [",
         "    Transition(",
         "        from_state=f,",
         "        to_state=t,",
@@ -448,8 +449,8 @@ def generate_c_model_h(spec: FsmSpec) -> str:
     N = spec.name
     guard_name = f"RXNET_{U}_FSM_MODEL_H"
 
-    param_sig_c = ", ".join(
-        f"rx_fsm_machine *machine" if i < 0 else f"{p.ctype} {p.name}"
+    ", ".join(
+        "rx_fsm_machine *machine" if i < 0 else f"{p.ctype} {p.name}"
         for i, p in [(-1, None)] + list(enumerate(spec.params))   # prepend machine*
     )
     # build proper param sig
@@ -465,7 +466,7 @@ def generate_c_model_h(spec: FsmSpec) -> str:
         "// GENERATED — do not edit by hand.",
         f"// Source: {N}.yaml   (regenerate with: python -m rxnet.tools.gen {N}.yaml)",
         "",
-        f"#pragma once",
+        "#pragma once",
         f"#ifndef {guard_name}",
         f"#define {guard_name}",
         "",
@@ -475,7 +476,7 @@ def generate_c_model_h(spec: FsmSpec) -> str:
         'extern "C" {',
         "#endif",
         "",
-        f"/* ── states ──────────────────────────────────────────────────────────────── */",
+        "/* ── states ──────────────────────────────────────────────────────────────── */",
         "enum {",
     ]
     for s in spec.states:
@@ -483,7 +484,7 @@ def generate_c_model_h(spec: FsmSpec) -> str:
     lines += [
         "};",
         "",
-        f"/* ── public factory ─────────────────────────────────────────────────────── */",
+        "/* ── public factory ─────────────────────────────────────────────────────── */",
         "/*",
         f" * Initialise *machine as a ``{N}`` FSM.",
         " * Call once; the machine must remain alive for the runtime's lifetime.",
@@ -531,7 +532,7 @@ def generate_c_stub_h(spec: FsmSpec) -> str:
         f"// {COPYRIGHT}",
         f"// SPDX-License-Identifier: {SPDX}",
         "",
-        f"#pragma once",
+        "#pragma once",
         f"#ifndef {guard_name}",
         f"#define {guard_name}",
         "",
@@ -575,7 +576,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
         "",
         '#include "rxnet/config.h"',
         "",
-        f"/* ── private data ────────────────────────────────────────────────────────── */",
+        "/* ── private data ────────────────────────────────────────────────────────── */",
         "",
         "typedef struct {",
         "    bool in_use;",
@@ -595,7 +596,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
         "        if (s_data[i].in_use && s_data[i].machine == m) return &s_data[i];",
         "    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {",
         "        if (!s_data[i].in_use) {",
-        f"            memset(&s_data[i], 0, sizeof(s_data[i]));",
+        "            memset(&s_data[i], 0, sizeof(s_data[i]));",
         "            s_data[i].in_use = true;",
         "            s_data[i].machine = m;",
         "            return &s_data[i];",
@@ -604,7 +605,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
         "    return NULL;",
         "}",
         "",
-        f"/* ── lifecycle callbacks ─────────────────────────────────────────────────── */",
+        "/* ── lifecycle callbacks ─────────────────────────────────────────────────── */",
         "",
         f"static void {N}_latch_inputs(rx_fsm_context *ctx, void *user) {{",
         f"    {N}_data *data = ({N}_data *)user;",
@@ -624,7 +625,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
 
     # guards
     if spec.guards:
-        lines.append(f"/* ── guards ──────────────────────────────────────────────────────────────── */")
+        lines.append("/* ── guards ──────────────────────────────────────────────────────────── */")
         lines.append("")
         for g in spec.guards:
             lines += [
@@ -640,7 +641,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
 
     # actions
     if spec.actions:
-        lines.append(f"/* ── actions ─────────────────────────────────────────────────────────────── */")
+        lines.append("/* ── actions ─────────────────────────────────────────────────────────── */")
         lines.append("")
         for a in spec.actions:
             lines += [
@@ -660,11 +661,12 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
         guard_ptr = t.guard if t.guard else "NULL"
         action_ptr = t.action if t.action else "NULL"
         trans_entries.append(
-            f"        {{{U}_STATE_{t.from_name}, {U}_STATE_{t.to_name}, {guard_ptr}, {action_ptr}}},"
+            f"        {{{U}_STATE_{t.from_name}, {U}_STATE_{t.to_name},"
+            f" {guard_ptr}, {action_ptr}}},"
         )
 
     lines += [
-        f"/* ── factory ─────────────────────────────────────────────────────────────── */",
+        "/* ── factory ─────────────────────────────────────────────────────────────── */",
         "",
         f"void {N}_fsm_create({c_factory_params}) {{",
         f"    static const rx_fsm_transition transitions[{n_trans}] = {{",
@@ -679,7 +681,7 @@ def generate_c_stub_c(spec: FsmSpec) -> str:
         textwrap.indent(param_inits, "    "),
         "    /* TODO: initialise hardware and extra data fields */",
         "",
-        f"    rx_fsm_machine_init(",
+        "    rx_fsm_machine_init(",
         f"        machine, {N!r}, {U}_STATE_{spec.initial_name},",
         f"        transitions, {n_trans},",
         f"        data, {N}_latch_inputs, {N}_dump_outputs",
@@ -701,7 +703,6 @@ def _tla_guard_var(guard: str) -> str:
 def generate_tla(spec: FsmSpec) -> str:
     """Emit ``<name>.tla`` — always regenerated, never edit by hand."""
     N = spec.name
-    U = spec.upper
     module = f"{N}_fsm"
 
     guard_vars = [_tla_guard_var(g) for g in spec.guards]
@@ -778,8 +779,8 @@ def generate_tla(spec: FsmSpec) -> str:
         if t.guard:
             op_parts.append(t.guard)
         op_name = "_".join(op_parts)
-        prefix = "    \\/" if i > 0 else "       "
-        lines.append(f"{'    \\/' if i > 0 else '      '} {op_name}")
+        prefix = "    \\/" if i > 0 else "      "
+        lines.append(f"{prefix} {op_name}")
     lines += [
         "    \\/ Stutter",
         "",
@@ -893,7 +894,7 @@ def _write(path: Path, content: str, overwrite: bool, dry_run: bool) -> str:
         return f"  would    {path}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    action = "overwrote" if path.exists() else "created  "
+    "overwrote" if path.exists() else "created  "
     return f"  wrote    {path}"
 
 
@@ -957,7 +958,8 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     # ── impl stubs (write once) ───────────────────────────────────────────────
-    print(f"Implementation stubs (written once{'; --force to reset' if not args.force else '; --force active — OVERWRITING'}):")
+    note = "; --force active — OVERWRITING" if args.force else "; --force to reset"
+    print(f"Implementation stubs (written once{note}):")
     print(_write(py_dir / f"{N}_fsm.py", generate_python_stub(spec), args.force, dry))
     print(_write(c_dir  / f"{N}_fsm.c",  generate_c_stub_c(spec),    args.force, dry))
     print(_write(c_dir  / f"{N}_fsm.h",  generate_c_stub_h(spec),    args.force, dry))

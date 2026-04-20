@@ -23,7 +23,6 @@ import pytest
 
 from rxnet.runtime import Context, Runtime
 
-
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
@@ -289,8 +288,9 @@ class TestCyclicExecutive:
     def test_outer_slot_table_two_runtimes_different_periods(self) -> None:
         """Two runtimes with periods 10 ms and 20 ms → 2 outer slots.
         Slot 0: both. Slot 1: only fast."""
-        from rxnet.cyclic import CyclicExecutive
         import math
+
+        from rxnet.cyclic import CyclicExecutive
 
         fast_rt = Runtime()
         fast_rt.add_node(CountingNode("f"), period_us=10_000)
@@ -556,7 +556,7 @@ class TestThreadExecutive:
 
 class TestFsmRuntimeMultiRate:
     def test_add_machine_with_period(self) -> None:
-        from rxnet.fsm import Machine, Runtime, Transition
+        from rxnet.fsm import Machine, Runtime
 
         rt = Runtime()
         m  = Machine("light", state=0, transitions=[])
@@ -581,8 +581,7 @@ class TestFsmRuntimeMultiRate:
 
     def test_slow_machine_ticks_half_as_often(self) -> None:
         """slow machine added at 20 ms should tick half as often as fast (10 ms)."""
-        from rxnet.fsm import Machine, Runtime, Transition
-        from rxnet.runtime import Context
+        from rxnet.fsm import Machine, Runtime
 
         fast_ticks = [0]
         slow_ticks = [0]

@@ -424,7 +424,7 @@ class TestParallelTick:
 class TestAsyncDeferred:
     def test_async_deferred_posts_to_pool(self) -> None:
         """With a worker_pool, dispatch_deferred must not run actions inline."""
-        ran_inline = threading.Event()
+        threading.Event()
         ran_in_pool: list[threading.Thread] = []
 
         def action(ctx: Context, user: object) -> None:
