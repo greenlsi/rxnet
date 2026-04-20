@@ -1,5 +1,8 @@
 CC      ?= cc
-CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude -D_POSIX_C_SOURCE=200809L
+CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude
+# _POSIX_C_SOURCE must be defined before the first system header in every
+# translation unit.  Use 'override' so this survives a command-line CFLAGS=…
+override CFLAGS += -D_POSIX_C_SOURCE=200809L
 EXAMPLE_CFLAGS ?= $(CFLAGS) -Wno-unused-parameter
 BUILD_DIR ?= build
 
