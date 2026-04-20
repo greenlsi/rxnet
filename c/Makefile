@@ -93,7 +93,7 @@ $(BUILD_DIR):
 
 examples: fsm_01_light fsm_02_auto fsm_03_blink fsm_04_mix_cyclic fsm_04_mix_threads fsm_04_mix_coop \
           fsm_04_mix_cyclic_trace fsm_04_mix_threads_trace fsm_04_mix_coop_trace \
-          pn_01_light pn_02_auto pn_03_blink pn_04_mix pn_04_mix_threads pn_04_mix_coop \
+          pn_01_light pn_02_auto pn_03_blink pn_04_mix_cyclic pn_04_mix_threads pn_04_mix_coop \
           pn_04_mix_cyclic_trace pn_04_mix_threads_trace pn_04_mix_coop_trace \
           mixed
 
@@ -237,7 +237,7 @@ $(PN_03_BLINK_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/03-blink/main_cli.c | $(BUILD_DIR)
 	$(CC) $(PN_CLI_FLAGS) -Iexamples/pn/03-blink $(link_src) $(LIB) -o $@
 
-pn_04_mix: $(PN_04_MIX_BIN)
+pn_04_mix_cyclic: $(PN_04_MIX_BIN)
 
 $(PN_04_MIX_BIN): $(LIB) $(PN_CLI_SHARED) \
     examples/pn/01-light/light_pn.c \

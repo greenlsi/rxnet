@@ -26,7 +26,6 @@ enum {
 #define BLINK_TRANSITION_COUNT 5u
 
 typedef struct {
-    int in_use;
     gpio_num_t button_gpio;
     gpio_num_t light_gpio;
     int latched_event;
@@ -38,6 +37,7 @@ typedef struct {
 } blink_pn_data;
 
 static blink_pn_data s_data[RXNET_MAX_RUNTIME_NODES];
+static size_t s_count = 0;
 
 static uint64_t blink_now_ms(void) {
 #ifdef ESP_PLATFORM
@@ -59,33 +59,6 @@ static uint64_t half_period_ms(unsigned int hz, int double_speed) {
     }
     hp = 500u / effective_hz;
     return hp > 0u ? hp : 1u;
-}
-
-static blink_pn_data *find_data(const rx_pn_net *net) {
-    size_t i;
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (s_data[i].in_use && s_data[i].net == net) {
-            return &s_data[i];
-        }
-    }
-    return NULL;
-}
-
-static blink_pn_data *find_or_alloc(rx_pn_net *net) {
-    size_t i;
-    blink_pn_data *data = find_data(net);
-    if (data != NULL) {
-        return data;
-    }
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (!s_data[i].in_use) {
-            memset(&s_data[i], 0, sizeof(s_data[i]));
-            s_data[i].in_use = 1;
-            s_data[i].net = net;
-            return &s_data[i];
-        }
-    }
-    return NULL;
 }
 
 static void blink_pn_latch_inputs(rx_pn_context *ctx, void *user) {
@@ -220,18 +193,15 @@ int blink_pn_init(
 ) {
     blink_pn_data *data;
 
-    if (net == NULL || base_hz == 0u) {
+    if (net == NULL || s_count >= RXNET_MAX_RUNTIME_NODES || base_hz == 0u) {
         return -1;
     }
 
-    data = find_or_alloc(net);
-    if (data == NULL) {
-        return -1;
-    }
+    data = &s_data[s_count++];
 
     if (app_driver_init_button(button_gpio) != ESP_OK ||
         app_driver_init_light(light_gpio) != ESP_OK) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
@@ -242,11 +212,12 @@ int blink_pn_init(
     data->base_hz = base_hz;
     data->now_ms = 0;
     data->next_toggle_ms = 0;
+    data->net = net;
 
     if (rx_pn_net_init(net, "blink", initial_places, BLINK_PLACE_COUNT,
                        transitions, BLINK_TRANSITION_COUNT, data,
                        blink_pn_latch_inputs, blink_pn_dump_outputs) != 0) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
@@ -254,7 +225,7 @@ int blink_pn_init(
 }
 
 int blink_pn_set_base_hz(rx_pn_net *net, unsigned int base_hz) {
-    blink_pn_data *data = find_data(net);
+    blink_pn_data *data = (blink_pn_data *) net->user;
 
     if (data == NULL || base_hz == 0u) {
         return -1;
@@ -270,11 +241,11 @@ int blink_pn_set_base_hz(rx_pn_net *net, unsigned int base_hz) {
 }
 
 unsigned int blink_pn_get_base_hz(const rx_pn_net *net) {
-    const blink_pn_data *data = find_data(net);
+    const blink_pn_data *data = (const blink_pn_data *) net->user;
     return data != NULL ? data->base_hz : 0u;
 }
 
 int blink_pn_get_output_enabled(const rx_pn_net *net) {
-    const blink_pn_data *data = find_data(net);
+    const blink_pn_data *data = (const blink_pn_data *) net->user;
     return data != NULL ? data->output_enabled : 0;
 }

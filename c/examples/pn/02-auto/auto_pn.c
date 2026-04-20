@@ -25,7 +25,6 @@ enum {
 #define AUTO_TRANSITION_COUNT 3u
 
 typedef struct {
-    int in_use;
     gpio_num_t button_gpio;
     gpio_num_t light_gpio;
     int latched_event;
@@ -37,6 +36,7 @@ typedef struct {
 } auto_pn_data;
 
 static auto_pn_data s_data[RXNET_MAX_RUNTIME_NODES];
+static size_t s_count = 0;
 
 static uint64_t auto_now_ms(void) {
 #ifdef ESP_PLATFORM
@@ -48,33 +48,6 @@ static uint64_t auto_now_ms(void) {
     }
     return ((uint64_t)ts.tv_sec * 1000u) + ((uint64_t)ts.tv_nsec / 1000000u);
 #endif
-}
-
-static auto_pn_data *find_data(const rx_pn_net *net) {
-    size_t i;
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (s_data[i].in_use && s_data[i].net == net) {
-            return &s_data[i];
-        }
-    }
-    return NULL;
-}
-
-static auto_pn_data *find_or_alloc(rx_pn_net *net) {
-    size_t i;
-    auto_pn_data *data = find_data(net);
-    if (data != NULL) {
-        return data;
-    }
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (!s_data[i].in_use) {
-            memset(&s_data[i], 0, sizeof(s_data[i]));
-            s_data[i].in_use = 1;
-            s_data[i].net = net;
-            return &s_data[i];
-        }
-    }
-    return NULL;
 }
 
 static void auto_pn_latch_inputs(rx_pn_context *ctx, void *user) {
@@ -155,18 +128,15 @@ int auto_pn_init(
 ) {
     auto_pn_data *data;
 
-    if (net == NULL || auto_off_timeout_ms == 0u) {
+    if (net == NULL || s_count >= RXNET_MAX_RUNTIME_NODES || auto_off_timeout_ms == 0u) {
         return -1;
     }
 
-    data = find_or_alloc(net);
-    if (data == NULL) {
-        return -1;
-    }
+    data = &s_data[s_count++];
 
     if (app_driver_init_button(button_gpio) != ESP_OK ||
         app_driver_init_light(light_gpio) != ESP_OK) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
@@ -177,11 +147,13 @@ int auto_pn_init(
     data->now_ms = 0;
     data->wait_end_ms = 0;
     data->wait_active = 0;
+    data->net = net;
 
-    if (rx_pn_net_init(net, "auto", initial_places, AUTO_PLACE_COUNT,
+    if (rx_pn_net_init(net, "auto", 
+                       initial_places, AUTO_PLACE_COUNT,
                        transitions, AUTO_TRANSITION_COUNT, data,
                        auto_pn_latch_inputs, auto_pn_dump_outputs) != 0) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
@@ -189,7 +161,7 @@ int auto_pn_init(
 }
 
 int auto_pn_set_timeout_ms(rx_pn_net *net, unsigned int timeout_ms) {
-    auto_pn_data *data = find_data(net);
+    auto_pn_data *data = (auto_pn_data *) net->user;
 
     if (data == NULL || timeout_ms == 0u) {
         return -1;
@@ -204,7 +176,7 @@ int auto_pn_set_timeout_ms(rx_pn_net *net, unsigned int timeout_ms) {
 }
 
 unsigned int auto_pn_get_timeout_ms(const rx_pn_net *net) {
-    const auto_pn_data *data = find_data(net);
+    const auto_pn_data *data = (const auto_pn_data *) net->user;
 
     return data != NULL ? data->auto_off_timeout_ms : 0u;
 }

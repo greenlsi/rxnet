@@ -18,7 +18,6 @@ enum {
 #define LIGHT_TRANSITION_COUNT 2u
 
 typedef struct {
-    int in_use;
     gpio_num_t button_gpio;
     gpio_num_t light_gpio;
     int latched_event;
@@ -26,27 +25,7 @@ typedef struct {
 } light_pn_data;
 
 static light_pn_data s_data[RXNET_MAX_RUNTIME_NODES];
-
-static light_pn_data *find_or_alloc(rx_pn_net *net) {
-    size_t i;
-
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (s_data[i].in_use && s_data[i].net == net) {
-            return &s_data[i];
-        }
-    }
-
-    for (i = 0; i < RXNET_MAX_RUNTIME_NODES; ++i) {
-        if (!s_data[i].in_use) {
-            memset(&s_data[i], 0, sizeof(s_data[i]));
-            s_data[i].in_use = 1;
-            s_data[i].net = net;
-            return &s_data[i];
-        }
-    }
-
-    return NULL;
-}
+static size_t s_count = 0;
 
 static void light_pn_latch_inputs(rx_pn_context *ctx, void *user) {
     light_pn_data *data = (light_pn_data *)user;
@@ -95,29 +74,28 @@ int light_pn_init(
 ) {
     light_pn_data *data;
 
-    if (net == NULL) {
+    if (net == NULL || s_count >= RXNET_MAX_RUNTIME_NODES) {
         return -1;
     }
 
-    data = find_or_alloc(net);
-    if (data == NULL) {
-        return -1;
-    }
+    data = &s_data[s_count++];
 
     if (app_driver_init_button(button_gpio) != ESP_OK ||
         app_driver_init_light(light_gpio) != ESP_OK) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
     data->button_gpio = button_gpio;
     data->light_gpio = light_gpio;
     data->latched_event = 0;
+    data->net = net;
 
-    if (rx_pn_net_init(net, "light", initial_places, LIGHT_PLACE_COUNT,
+    if (rx_pn_net_init(net, "light", 
+                       initial_places, LIGHT_PLACE_COUNT,
                        transitions, LIGHT_TRANSITION_COUNT, data,
                        light_pn_latch_inputs, light_pn_dump_outputs) != 0) {
-        data->in_use = 0;
+        --s_count;
         return -1;
     }
 
