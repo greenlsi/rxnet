@@ -70,7 +70,7 @@ static void run_fsm_light(void) {
     rx_fsm_runtime_init(&rt, 1);
     rx_fsm_machine_init(&machine, "light", 0, transitions, 2,
                         &button, fsm_latch, fsm_noop_dump);
-    rx_fsm_runtime_add_machine(&rt, &machine);
+    rx_fsm_runtime_add_machine(&rt, &machine, 0, 0);
 
     for (i = 0; i < N; i++) {
         g_button = sequence[i];
@@ -100,7 +100,7 @@ static void run_fsm_first_match(void) {
     /* Machine starts at 0; first tick → B(1), then B has no outgoing → stays 1 */
     rx_fsm_machine_init(&machine, "first_match", 0, transitions, 2,
                         &button, fsm_latch, fsm_noop_dump);
-    rx_fsm_runtime_add_machine(&rt, &machine);
+    rx_fsm_runtime_add_machine(&rt, &machine, 0, 0);
 
     for (i = 0; i < N; i++) {
         rx_fsm_tick(&rt);
@@ -150,7 +150,7 @@ static void run_pn_light(void) {
     rx_pn_runtime_init(&rt, 1);
     rx_pn_net_init(&net, "light", initial, 3, transitions, 2, &net,
                    pn_light_latch_cb, NULL);
-    rx_pn_runtime_add_net(&rt, &net);
+    rx_pn_runtime_add_net(&rt, &net, 0, 0);
 
     for (i = 0; i < N; i++) {
         g_button = sequence[i];
