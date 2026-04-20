@@ -3,7 +3,11 @@
 
 /*
  * clock_gettime() and nanosleep() are POSIX extensions not exposed by
- * strict C99 mode (-std=c99).  Request POSIX.1-2008 before any system header.
+ * strict C99 mode (-std=c99).  _POSIX_C_SOURCE must be defined before the
+ * first system header in each translation unit — the Makefile passes
+ * -D_POSIX_C_SOURCE=200809L for this reason.  The guard below is a
+ * best-effort fallback for build systems that omit it; it only works when
+ * no system header has been included yet in the compilation unit.
  */
 #if !defined(_POSIX_C_SOURCE) || _POSIX_C_SOURCE < 200809L
 #  undef  _POSIX_C_SOURCE

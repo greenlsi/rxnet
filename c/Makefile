@@ -1,5 +1,5 @@
 CC      ?= cc
-CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude
+CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude -D_POSIX_C_SOURCE=200809L
 EXAMPLE_CFLAGS ?= $(CFLAGS) -Wno-unused-parameter
 BUILD_DIR ?= build
 
