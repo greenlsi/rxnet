@@ -1,0 +1,22 @@
+@PACKAGE_INIT@
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/rxnetTargets.cmake")
+
+# Check that all required targets exist
+if(NOT TARGET rxnet::rxnet)
+    message(FATAL_ERROR "rxnet::rxnet target not found")
+endif()
+
+# Set public variables for compatibility
+get_target_property(RXNET_INCLUDE_DIRS rxnet::rxnet INTERFACE_INCLUDE_DIRECTORIES)
+get_target_property(RXNET_LIBRARIES rxnet::rxnet IMPORTED_LOCATION)
+
+# Handle both BUILD_INTERFACE and INSTALL_INTERFACE
+list(APPEND RXNET_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
+
+message(STATUS "Found rxnet ${rxnet_VERSION}")
+message(STATUS "  rxnet libraries: ${RXNET_LIBRARIES}")
+message(STATUS "  rxnet include dirs: ${RXNET_INCLUDE_DIRS}")
+
+check_required_components(rxnet)
