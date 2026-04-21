@@ -228,7 +228,7 @@ $(MIXED_BIN): $(LIB) $(MIXED_SRCS) | $(BUILD_DIR)
 # Tests                                                                #
 # ------------------------------------------------------------------ #
 
-test: $(TEST_BINS)
+test: lib $(TEST_BINS)
 	@echo ""
 	@echo "Running test_runtime..."
 	@$(TEST_RUNTIME_BIN)
