@@ -8,9 +8,7 @@
 #include <time.h>
 
 #include "rxnet/config.h"
-#ifdef ESP_PLATFORM
-#include "esp_timer.h"
-#endif
+#include "rxnet/port.h"
 
 typedef struct {
     rx_fsm_machine *machine;   /* needed to read machine->state in callbacks */
@@ -20,8 +18,8 @@ typedef struct {
     bool event_consumed;
     int output_enabled;
     unsigned int base_hz;
-    uint64_t now_ms;
-    uint64_t next_toggle_ms;
+    rx_tick_t now;
+    rx_tick_t next_toggle;
 } blink_machine_data;
 
 static blink_machine_data s_data[RXNET_MAX_RUNTIME_NODES];
@@ -33,22 +31,9 @@ enum {
     BLINK_STATE_X2 = 2,
 };
 
-static uint64_t blink_now_ms(void) {
-#ifdef ESP_PLATFORM
-    return (uint64_t)(esp_timer_get_time() / 1000);
-#else
-    struct timespec ts;
-
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        return 0;
-    }
-    return ((uint64_t)ts.tv_sec * 1000u) + ((uint64_t)ts.tv_nsec / 1000000u);
-#endif
-}
-
-static uint64_t half_period_ms_for_state(int state, unsigned int base_hz) {
+static uint64_t half_period_us_for_state(int state, unsigned int base_hz) {
     uint64_t hz = (uint64_t)base_hz;
-    uint64_t half_period_ms;
+    uint64_t half_period_us;
 
     if (hz == 0u) {
         hz = 1u;
@@ -58,12 +43,12 @@ static uint64_t half_period_ms_for_state(int state, unsigned int base_hz) {
         hz *= 2u;
     }
 
-    half_period_ms = 500u / hz;
-    if (half_period_ms == 0u) {
-        half_period_ms = 1u;
+    half_period_us = 500000u / hz;
+    if (half_period_us == 0u) {
+        half_period_us = 1u;
     }
 
-    return half_period_ms;
+    return half_period_us;
 }
 
 static void blink_machine_latch_inputs(rx_fsm_context *ctx, void *user) {
@@ -74,7 +59,7 @@ static void blink_machine_latch_inputs(rx_fsm_context *ctx, void *user) {
         return;
     }
 
-    data->now_ms = blink_now_ms();
+    data->now = rx_tick_now();
     data->latched_event = app_driver_latch_button_event(data->button_gpio);
     data->event_consumed = false;
 }
@@ -92,8 +77,8 @@ static int toggle_due(const rx_fsm_context *ctx, void *user) {
     (void)ctx;
     return data != NULL &&
            data->machine->state != BLINK_STATE_OFF &&
-           data->next_toggle_ms > 0u &&
-           data->now_ms >= data->next_toggle_ms;
+           data->next_toggle > 0u &&
+           data->now >= data->next_toggle;
 }
 
 static void enter_blink_x1(rx_fsm_context *ctx, void *user) {
@@ -106,7 +91,7 @@ static void enter_blink_x1(rx_fsm_context *ctx, void *user) {
 
     data->event_consumed = true;
     data->output_enabled = 1;
-    data->next_toggle_ms = data->now_ms + half_period_ms_for_state(BLINK_STATE_X1, data->base_hz);
+    data->next_toggle = rx_tick_add_us(data->now, half_period_us_for_state(BLINK_STATE_X1, data->base_hz));
 }
 
 static void enter_blink_x2(rx_fsm_context *ctx, void *user) {
@@ -119,12 +104,12 @@ static void enter_blink_x2(rx_fsm_context *ctx, void *user) {
 
     data->event_consumed = true;
     data->output_enabled = 1;
-    data->next_toggle_ms = data->now_ms + half_period_ms_for_state(BLINK_STATE_X2, data->base_hz);
+    data->next_toggle = rx_tick_add_us(data->now, half_period_us_for_state(BLINK_STATE_X1, data->base_hz));
 }
 
 static void toggle_light(rx_fsm_context *ctx, void *user) {
     blink_machine_data *data = (blink_machine_data *)user;
-    uint64_t half_period_ms;
+    uint64_t half_period_us;
 
     (void)ctx;
     if (data == NULL) {
@@ -132,12 +117,12 @@ static void toggle_light(rx_fsm_context *ctx, void *user) {
     }
 
     data->output_enabled = !data->output_enabled;
-    half_period_ms = half_period_ms_for_state(data->machine->state, data->base_hz);
-    if (data->next_toggle_ms == 0u) {
-        data->next_toggle_ms = data->now_ms + half_period_ms;
+    half_period_us = half_period_us_for_state(data->machine->state, data->base_hz);
+    if (data->next_toggle == 0u) {
+        data->next_toggle = rx_tick_add_us(data->now, half_period_us);
         return;
     }
-    data->next_toggle_ms += half_period_ms;
+    data->next_toggle = rx_tick_add_us(data->next_toggle, half_period_us);
 }
 
 static void enter_off(rx_fsm_context *ctx, void *user) {
@@ -150,7 +135,7 @@ static void enter_off(rx_fsm_context *ctx, void *user) {
 
     data->event_consumed = true;
     data->output_enabled = 0;
-    data->next_toggle_ms = 0u;
+    data->next_toggle = 0u;
 }
 
 static void blink_machine_dump_outputs(rx_fsm_context *ctx, void *user) {
@@ -194,8 +179,8 @@ void blink_fsm_create(
     data->event_consumed = false;
     data->output_enabled = 0;
     data->base_hz = base_hz;
-    data->now_ms = 0;
-    data->next_toggle_ms = 0;
+    data->now = 0;
+    data->next_toggle = 0;
 
     if (app_driver_init_button(button_gpio) != ESP_OK ||
         app_driver_init_light(light_gpio) != ESP_OK) {
@@ -224,8 +209,7 @@ int blink_fsm_set_base_hz(rx_fsm_machine *machine, unsigned int base_hz) {
     data = (blink_machine_data *)machine->user;
     data->base_hz = base_hz;
     if (machine->state != BLINK_STATE_OFF) {
-        data->next_toggle_ms = blink_now_ms() +
-            half_period_ms_for_state(machine->state, base_hz);
+        data->next_toggle = rx_tick_add_us(data->now, half_period_us_for_state(data->machine->state, data->base_hz));
     }
     return 0;
 }

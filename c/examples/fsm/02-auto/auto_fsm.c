@@ -8,9 +8,7 @@
 #include <time.h>
 
 #include "rxnet/config.h"
-#ifdef ESP_PLATFORM
-#include "esp_timer.h"
-#endif
+#include "rxnet/port.h"
 
 typedef struct {
     rx_fsm_machine *machine;   /* needed to read machine->state in callbacks */
@@ -19,10 +17,9 @@ typedef struct {
     bool latched_event;
     bool event_consumed;
     int output_enabled;
-    unsigned int auto_off_timeout_ms;
-    uint64_t now_ms;
-    uint64_t wait_end_ms;
-    bool wait_active;
+    long auto_off_timeout;
+    rx_tick_t now;
+    rx_tick_t wait_end;
 } auto_machine_data;
 
 static auto_machine_data s_data[RXNET_MAX_RUNTIME_NODES];
@@ -33,40 +30,20 @@ enum {
     AUTO_STATE_ON = 1,
 };
 
-static uint64_t auto_now_ms(void) {
-#ifdef ESP_PLATFORM
-    return (uint64_t)(esp_timer_get_time() / 1000);
-#else
-    struct timespec ts;
-
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        return 0;
-    }
-    return ((uint64_t)ts.tv_sec * 1000u) + ((uint64_t)ts.tv_nsec / 1000000u);
-#endif
-}
-
 static void auto_machine_latch_inputs(rx_fsm_context *ctx, void *user) {
     auto_machine_data *data = (auto_machine_data *)user;
-    uint64_t now_ms;
 
     (void)ctx;
     if (data == NULL) {
         return;
     }
 
-    now_ms = auto_now_ms();
-    data->now_ms = now_ms;
+    data->now = rx_tick_now();
     data->latched_event = app_driver_latch_button_event(data->button_gpio);
     data->event_consumed = false;
 
     if (data->latched_event) {
-        data->wait_end_ms = now_ms + (uint64_t)data->auto_off_timeout_ms;
-        data->wait_active = true;
-    }
-
-    if (data->machine->state == AUTO_STATE_OFF) {
-        data->wait_active = false;
+        data->wait_end = rx_tick_add_us(data->now, data->auto_off_timeout);
     }
 }
 
@@ -82,9 +59,8 @@ static int auto_off_elapsed(const rx_fsm_context *ctx, void *user) {
 
     (void)ctx;
     return data != NULL &&
-           data->wait_active &&
-           data->auto_off_timeout_ms > 0u &&
-           data->now_ms >= data->wait_end_ms;
+           data->auto_off_timeout > 0 &&
+           data->now >= data->wait_end;
 }
 
 static void auto_on(rx_fsm_context *ctx, void *user) {
@@ -97,10 +73,7 @@ static void auto_on(rx_fsm_context *ctx, void *user) {
 
     data->output_enabled = 1;
     data->event_consumed = true;
-    if (!data->wait_active) {
-        data->wait_end_ms = auto_now_ms() + (uint64_t)data->auto_off_timeout_ms;
-        data->wait_active = true;
-    }
+    data->wait_end = rx_tick_add_us(data->now, data->auto_off_timeout);
 }
 
 static void auto_off(rx_fsm_context *ctx, void *user) {
@@ -112,7 +85,6 @@ static void auto_off(rx_fsm_context *ctx, void *user) {
     }
 
     data->output_enabled = 0;
-    data->wait_active = false;
 }
 
 static void auto_machine_dump_outputs(rx_fsm_context *ctx, void *user) {
@@ -142,7 +114,7 @@ void auto_fsm_create(
     };
     auto_machine_data *data;
 
-    if (machine == NULL || auto_off_timeout_ms == 0u ||
+    if (machine == NULL || auto_off_timeout_ms == 0 ||
         s_count >= RXNET_MAX_RUNTIME_NODES) {
         return;
     }
@@ -154,10 +126,9 @@ void auto_fsm_create(
     data->latched_event = false;
     data->event_consumed = false;
     data->output_enabled = 0;
-    data->auto_off_timeout_ms = auto_off_timeout_ms;
-    data->now_ms = 0;
-    data->wait_end_ms = 0;
-    data->wait_active = false;
+    data->auto_off_timeout = auto_off_timeout_ms * 1000L;
+    data->now = 0;
+    data->wait_end = 0;
 
     if (app_driver_init_button(button_gpio) != ESP_OK ||
         app_driver_init_light(light_gpio) != ESP_OK) {
@@ -180,21 +151,20 @@ void auto_fsm_create(
 int auto_fsm_set_auto_off_timeout_ms(rx_fsm_machine *machine, unsigned int auto_off_timeout_ms) {
     auto_machine_data *data;
 
-    if (machine == NULL || machine->user == NULL || auto_off_timeout_ms == 0u) {
+    if (machine == NULL || machine->user == NULL || auto_off_timeout_ms == 0) {
         return -1;
     }
     data = (auto_machine_data *)machine->user;
-    data->auto_off_timeout_ms = auto_off_timeout_ms;
+    data->auto_off_timeout = auto_off_timeout_ms * 1000L;
     if (machine->state == AUTO_STATE_ON) {
-        data->wait_end_ms = auto_now_ms() + (uint64_t)auto_off_timeout_ms;
-        data->wait_active = true;
+        data->wait_end = rx_tick_add_us(data->now, data->auto_off_timeout);
     }
     return 0;
 }
 
 unsigned int auto_fsm_get_auto_off_timeout_ms(const rx_fsm_machine *machine) {
     if (machine == NULL || machine->user == NULL) {
-        return 0u;
+        return 0;
     }
-    return ((const auto_machine_data *)machine->user)->auto_off_timeout_ms;
+    return ((const auto_machine_data *)machine->user)->auto_off_timeout / 1000L;
 }

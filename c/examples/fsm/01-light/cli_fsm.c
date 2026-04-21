@@ -130,7 +130,9 @@ static void run_command(rx_fsm_context *ctx, cli_machine_data *data, const char 
     for (i = 0; i < data->command_count; ++i) {
         const cli_fsm_command *entry = &data->commands[i];
 
-        if (strcmp(command, entry->name) == 0) {
+        size_t name_len = strlen(entry->name);
+        if (strcmp(command, entry->name) == 0 ||
+            (strncmp(command, entry->name, name_len) == 0 && command[name_len] == ' ')) {
             entry->handler(ctx, data, command, entry->user_data);
             return;
         }
