@@ -55,10 +55,10 @@ PARITY_RUNNER_BIN := $(BUILD_DIR)/parity_runner
 all: lib examples
 
 # ------------------------------------------------------------------ #
-# Static library                                                       #
+# Static library                                                     #
 # ------------------------------------------------------------------ #
 
-lib: $(LIB)
+lib: $(LIB) $(TRACE_LIB)
 
 $(LIB): $(LIB_OBJS)
 	ar rcs $@ $^
