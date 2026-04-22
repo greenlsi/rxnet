@@ -134,17 +134,17 @@ $(FSM_04_MIX_COOP_BIN): $(LIB) $(FSM_MIX_SHARED) examples/fsm/04-mix/main_coop.c
 fsm_04_mix_cyclic_trace: $(FSM_04_MIX_CYCLIC_TRACE_BIN)
 
 $(FSM_04_MIX_CYCLIC_TRACE_BIN): $(TRACE_LIB) $(FSM_MIX_SHARED) examples/fsm/04-mix/main_cyclic_trace.c | $(BUILD_DIR)
-	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(link_src) $(TRACE_LIB) -o $@
+	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(trace_link_src) $(TRACE_LIB) -o $@
 
 fsm_04_mix_threads_trace: $(FSM_04_MIX_THREADS_TRACE_BIN)
 
 $(FSM_04_MIX_THREADS_TRACE_BIN): $(TRACE_LIB) $(FSM_MIX_SHARED) examples/fsm/04-mix/main_threads_trace.c | $(BUILD_DIR)
-	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(link_src) $(TRACE_LIB) -o $@ -lpthread
+	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(trace_link_src) $(TRACE_LIB) -o $@ -lpthread
 
 fsm_04_mix_coop_trace: $(FSM_04_MIX_COOP_TRACE_BIN)
 
 $(FSM_04_MIX_COOP_TRACE_BIN): $(TRACE_LIB) $(FSM_MIX_SHARED) examples/fsm/04-mix/main_coop_trace.c | $(BUILD_DIR)
-	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(link_src) $(TRACE_LIB) -o $@
+	$(CC) $(FSM_MIX_FLAGS) -DRX_TRACE_ENABLE $(trace_link_src) $(TRACE_LIB) -o $@
 
 # ------------------------------------------------------------------ #
 # PN Examples                                                       #
