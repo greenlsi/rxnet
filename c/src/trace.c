@@ -63,6 +63,17 @@ static void _wname(FILE *f, const char *name) {
 
 /* ── public API ────────────────────────────────────────────────────────── */
 
+static int _find_attached_nid(const rx_trace_buf_t *buf, const struct rx_node *node) {
+    uint8_t nid;
+
+    if (!buf || !node) return -1;
+    for (nid = 0; nid < buf->node_count; ++nid) {
+        if (buf->attached_nodes[nid] == node)
+            return (int)nid;
+    }
+    return -1;
+}
+
 void rx_trace_init(rx_trace_buf_t *buf, uint8_t phases) {
     if (!buf) return;
     memset(buf, 0, sizeof(*buf));
@@ -72,11 +83,52 @@ void rx_trace_init(rx_trace_buf_t *buf, uint8_t phases) {
 }
 
 void rx_trace_attach(rx_trace_buf_t *buf, struct rx_node *node, uint8_t nid) {
+    int prev_nid;
+
     if (!buf || !node) return;
+    if (nid >= RX_TRACE_MAX_NODES) return;
+
+    prev_nid = _find_attached_nid(buf, node);
+    if (prev_nid >= 0 && (uint8_t)prev_nid != nid)
+        buf->attached_nodes[prev_nid] = NULL;
+
     node->trace     = buf;
     node->trace_nid = nid;
+    buf->attached_nodes[nid] = node;
     if (nid >= buf->node_count)
         buf->node_count = (uint8_t)(nid + 1u);
+}
+
+int rx_trace_attach_runtime(rx_trace_buf_t *buf, struct rx_runtime *rt) {
+    size_t i;
+
+    if (!buf || !rt) return -1;
+
+    for (i = 0; i < rt->node_count; ++i) {
+        rx_node *node = rt->nodes[i].node;
+        int nid;
+
+        if (!node) continue;
+
+        if (node->trace == buf && node->trace_nid < RX_TRACE_MAX_NODES) {
+            if (buf->attached_nodes[node->trace_nid] == NULL)
+                buf->attached_nodes[node->trace_nid] = node;
+            if (node->trace_nid >= buf->node_count)
+                buf->node_count = (uint8_t)(node->trace_nid + 1u);
+            continue;
+        }
+
+        nid = _find_attached_nid(buf, node);
+        if (nid < 0) {
+            if (buf->node_count >= RX_TRACE_MAX_NODES)
+                return -1;
+            nid = (int)buf->node_count;
+        }
+
+        rx_trace_attach(buf, node, (uint8_t)nid);
+    }
+
+    return 0;
 }
 
 void rx_trace_set_node_name(rx_trace_buf_t *buf, uint8_t nid, const char *name) {

@@ -119,10 +119,14 @@ struct rx_trace_buf {
 
     uint8_t label_count;
     char    label_names[RX_TRACE_MAX_LABELS][RX_TRACE_NAME_LEN];
+
+    /* stable node identity for incremental runtime attach */
+    const struct rx_node *attached_nodes[RX_TRACE_MAX_NODES];
 };
 
 /* ── forward declaration to avoid circular include ────────────────────── */
 struct rx_node; /* defined in rxnet/runtime.h */
+struct rx_runtime; /* defined in rxnet/runtime.h */
 
 /* ── public API ───────────────────────────────────────────────────────── */
 
@@ -135,6 +139,12 @@ void rx_trace_init(rx_trace_buf_t *buf, uint8_t phases);
 
 /* Attach the buffer to a node: sets node->trace and node->trace_nid. */
 void rx_trace_attach(rx_trace_buf_t *buf, struct rx_node *node, uint8_t nid);
+
+/* Attach the buffer to every runtime node.
+ * Idempotent for already traced nodes and incremental for newly added ones.
+ * Returns 0 on success, -1 on invalid args or if RX_TRACE_MAX_NODES is exceeded.
+ */
+int rx_trace_attach_runtime(rx_trace_buf_t *buf, struct rx_runtime *rt);
 
 /* Name registration — call once during setup. */
 void rx_trace_set_node_name (rx_trace_buf_t *buf, uint8_t nid, const char *name);

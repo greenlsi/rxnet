@@ -934,6 +934,12 @@ pre-asignado. La estructura del runtime no se modifica: si el tracer nunca se
 adjunta, `Runtime`, `Machine` y `Net` no contienen ni una línea relacionada con
 el trazado.
 
+`Tracer.attach(rt)` es además **idempotente e incremental**. Si se llama dos
+veces sobre el mismo runtime, no vuelve a envolver los nodos ya trazados. Si
+entre llamadas se añaden o eliminan nodos y se reconstruye el runtime, una
+nueva llamada a `attach()` conserva el identificador (`nid`) de los nodos ya
+conocidos y asigna identificadores nuevos solo a los nodos añadidos.
+
 ### Uso básico
 
 ```python
@@ -945,6 +951,19 @@ tracer.attach(rt)          # antes de ce.run() / te.run()
 ce = CyclicExecutive()
 ce.add(rt)
 ce.run()                   # el sistema corre con trazado activo
+```
+
+Esto permite reconfigurar la topología durante la preparación del sistema sin
+recrear el tracer:
+
+```python
+tracer.attach(rt)
+
+# más tarde: cambia la red
+rt.add_machine(aux_machine)
+rt.build()
+
+tracer.attach(rt)          # no duplica wrappers; solo adjunta lo nuevo
 ```
 
 Mientras el sistema está en marcha, el tracer acumula eventos en el buffer
@@ -1041,6 +1060,11 @@ Net(
 ```python
 tracer.detach(rt)   # restaura los nodos originales; overhead = cero de nuevo
 ```
+
+Si después de `detach()` se modifica la estructura del runtime, se puede volver
+a llamar a `attach()` y el tracer reutilizará los `nid` de los nodos ya
+conocidos, asignando identificadores nuevos únicamente a los nodos que no
+hubieran sido vistos antes.
 
 ---
 

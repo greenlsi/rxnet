@@ -193,6 +193,44 @@ void rx_trace_disable(rx_runtime_t *rt);
 void rx_trace_reset(rx_runtime_t *rt);
 ```
 
+### Public attachment API
+
+The implementation exposes two complementary ways to attach tracing metadata:
+
+```c
+void rx_trace_attach(rx_trace_buf_t *buf, struct rx_node *node, uint8_t nid);
+int  rx_trace_attach_runtime(rx_trace_buf_t *buf, struct rx_runtime *rt);
+```
+
+`rx_trace_attach()` is the low-level primitive: it binds one node to one trace
+buffer and assigns an explicit `nid`.
+
+`rx_trace_attach_runtime()` is the runtime-oriented helper:
+
+- it walks every node currently registered in `rt`
+- it is **idempotent** for nodes already attached to the same buffer
+- it is **incremental** when the runtime topology grows
+- it preserves the existing `nid` of previously known nodes
+- it assigns fresh `nid` values only to newly discovered nodes
+
+This is the preferred API when the application can add nodes, rebuild the
+runtime, and then resynchronize tracing without renumbering the existing graph.
+
+Example:
+
+```c
+rx_trace_buf_t tracer;
+rx_trace_init(&tracer, 0);
+
+rx_trace_attach_runtime(&tracer, &rt.runtime);
+
+/* later: the runtime grows */
+rx_fsm_runtime_add_machine(&rt, &aux_machine, 0, 0);
+rx_runtime_build(&rt.runtime);
+
+rx_trace_attach_runtime(&tracer, &rt.runtime);  /* attaches only aux_machine */
+```
+
 ### Internal recording functions (called from runtime and model code via macros)
 
 ```c

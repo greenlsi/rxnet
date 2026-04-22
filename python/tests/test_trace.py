@@ -168,6 +168,60 @@ class TestTracerAttachDetach:
         tracer.attach(rt)
         assert tracer._names[0] == "light"
 
+    def test_attach_is_idempotent(self):
+        from rxnet.trace import _Traced
+        _, rt = _flag_machine([False])
+        tracer = Tracer()
+        tracer.attach(rt)
+        first_node = tracer._core(rt)._entries[0].node
+        tracer.attach(rt)
+        second_node = tracer._core(rt)._entries[0].node
+        assert isinstance(second_node, _Traced)
+        assert second_node is first_node
+        assert len(tracer._nodes) == 1
+
+    def test_attach_is_incremental_for_new_nodes(self):
+        from rxnet.trace import _Traced
+        _, rt = _flag_machine([False])
+        tracer = Tracer()
+        tracer.attach(rt)
+
+        extra = Machine(
+            name="aux",
+            state=OFF,
+            transitions=[FsmTransition(from_state=OFF, to_state=OFF)],
+        )
+        rt.add_machine(extra)
+        rt.build()
+
+        tracer.attach(rt)
+        entries = tracer._core(rt)._entries
+        assert all(isinstance(entry.node, _Traced) for entry in entries)
+        assert entries[0].node._nid == 0
+        assert entries[1].node._nid == 1
+        assert tracer._names[1] == "aux"
+
+    def test_attach_reuses_nid_after_detach_and_rebuild(self):
+        from rxnet.trace import _Traced
+        _, rt = _flag_machine([False])
+        tracer = Tracer()
+        tracer.attach(rt)
+        tracer.detach(rt)
+
+        extra = Machine(
+            name="aux",
+            state=OFF,
+            transitions=[FsmTransition(from_state=OFF, to_state=OFF)],
+        )
+        rt.add_machine(extra)
+        rt.build()
+
+        tracer.attach(rt)
+        entries = tracer._core(rt)._entries
+        assert all(isinstance(entry.node, _Traced) for entry in entries)
+        assert entries[0].node._nid == 0
+        assert entries[1].node._nid == 1
+
 
 # ── FSM event recording ───────────────────────────────────────────────────────
 

@@ -134,6 +134,78 @@ static void test_attach_sets_trace_pointer(void) {
     rx_fsm_runtime_free(&rt);
 }
 
+static void test_attach_runtime_is_idempotent(void) {
+    rx_trace_buf_t buf;
+    rx_fsm_runtime rt;
+    rx_fsm_machine m;
+
+    rx_trace_init(&buf, 0);
+    make_light_machine(&rt, &m);
+
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_TRUE(m.node.trace == &buf);
+    ASSERT_EQ(0, (int)m.node.trace_nid);
+
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_TRUE(m.node.trace == &buf);
+    ASSERT_EQ(0, (int)m.node.trace_nid);
+    ASSERT_TRUE(buf.attached_nodes[0] == &m.node);
+    ASSERT_EQ(1, (int)buf.node_count);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void test_attach_runtime_is_incremental_for_new_nodes(void) {
+    rx_trace_buf_t buf;
+    rx_fsm_runtime rt;
+    rx_fsm_machine m1;
+    rx_fsm_machine m2;
+    static const rx_fsm_transition self_loop[] = {
+        {OFF, OFF, NULL, NULL},
+    };
+
+    rx_trace_init(&buf, 0);
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&m1, "light", OFF, self_loop, 1, NULL,
+                        noop_fsm_latch, noop_fsm_dump);
+    rx_fsm_machine_init(&m2, "aux", OFF, self_loop, 1, NULL,
+                        noop_fsm_latch, noop_fsm_dump);
+
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &m1, 0, 0));
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_EQ(0, (int)m1.node.trace_nid);
+    ASSERT_EQ(1, (int)buf.node_count);
+
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &m2, 0, 0));
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_EQ(0, (int)m1.node.trace_nid);
+    ASSERT_EQ(1, (int)m2.node.trace_nid);
+    ASSERT_TRUE(buf.attached_nodes[0] == &m1.node);
+    ASSERT_TRUE(buf.attached_nodes[1] == &m2.node);
+    ASSERT_EQ(2, (int)buf.node_count);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void test_attach_runtime_reuses_nid_after_manual_detach(void) {
+    rx_trace_buf_t buf;
+    rx_fsm_runtime rt;
+    rx_fsm_machine m;
+
+    rx_trace_init(&buf, 0);
+    make_light_machine(&rt, &m);
+
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_EQ(0, (int)m.node.trace_nid);
+
+    m.node.trace = NULL; /* emulate temporary detach without losing tracer metadata */
+    ASSERT_EQ(0, rx_trace_attach_runtime(&buf, &rt.runtime));
+    ASSERT_TRUE(m.node.trace == &buf);
+    ASSERT_EQ(0, (int)m.node.trace_nid);
+
+    rx_fsm_runtime_free(&rt);
+}
+
 static void test_set_node_name_stored(void) {
     rx_trace_buf_t buf;
     rx_trace_init(&buf, 0);
@@ -433,6 +505,9 @@ int main(void) {
 
     TEST_SUITE("attach / name registration");
     RUN_TEST(test_attach_sets_trace_pointer);
+    RUN_TEST(test_attach_runtime_is_idempotent);
+    RUN_TEST(test_attach_runtime_is_incremental_for_new_nodes);
+    RUN_TEST(test_attach_runtime_reuses_nid_after_manual_detach);
     RUN_TEST(test_set_node_name_stored);
     RUN_TEST(test_set_state_name_stored);
     RUN_TEST(test_set_place_name_stored);

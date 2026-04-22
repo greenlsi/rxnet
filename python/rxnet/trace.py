@@ -206,6 +206,7 @@ class Tracer:
         self._phases = phases
         # per-node metadata (populated at attach time)
         self._nodes:  list[Any]       = []   # original nodes for diagram generation
+        self._node_ids: dict[int, int] = {}  # id(original node) -> stable nid
         self._names:  dict[int, str]  = {}   # nid → display name
         self._inits:  dict[int, int]  = {}   # nid → initial FSM state
         # user-event label registry
@@ -222,7 +223,9 @@ class Tracer:
     def attach(self, rt: Any) -> Tracer:
         """Wrap all nodes in *rt* with tracing proxies.
 
-        Must be called **before** ``run()``.  Returns ``self`` for chaining.
+        Idempotent for already traced nodes and incremental for new nodes
+        added after previous ``attach()`` / ``detach()`` cycles.  Must be
+        called **before** ``run()``.  Returns ``self`` for chaining.
         """
         from .fsm import Machine
 
@@ -230,12 +233,18 @@ class Tracer:
         if not core._built:
             core.build()
         for entry in core._entries:
-            nid  = len(self._nodes)
+            if isinstance(entry.node, _Traced):
+                continue
             node = entry.node
-            self._nodes.append(node)
-            self._names[nid] = getattr(node, "name", f"node_{nid}")
-            if isinstance(node, Machine):
-                self._inits[nid] = node.state   # snapshot initial state
+            node_key = id(node)
+            nid = self._node_ids.get(node_key)
+            if nid is None:
+                nid = len(self._nodes)
+                self._node_ids[node_key] = nid
+                self._nodes.append(node)
+                self._names[nid] = getattr(node, "name", f"node_{nid}")
+                if isinstance(node, Machine):
+                    self._inits[nid] = node.state   # snapshot initial state
             entry.node = _Traced(node, nid, self._buf, self._phases)
         core.build()   # rebuild slot lists with wrapped nodes
         return self

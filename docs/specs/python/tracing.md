@@ -97,6 +97,21 @@ Tracer attached:
 
 Neither `Runtime`, `Machine`, nor `Net` gain any tracer-related fields or checks.
 
+### Idempotent and incremental attachment
+
+`Tracer.attach(rt)` must be safe to call repeatedly on the same runtime.
+
+- If an entry already contains a traced wrapper, `attach()` leaves it unchanged.
+- If a node was already known to the tracer and is seen again after a later
+  `build()` or after a `detach()` / `attach()` cycle, it must retain its
+  original `node_id`.
+- If new nodes have been added to the runtime since the previous attachment,
+  `attach()` must wrap only those new nodes and assign fresh `node_id` values
+  to them.
+
+This allows the application to evolve the runtime topology during setup without
+recreating the tracer or invalidating previously recorded node identities.
+
 ### The `build()` constraint
 
 `rt.build()` constructs `_slots: list[list[Node]]` from `_entries`. The tracer must call
@@ -104,6 +119,8 @@ Neither `Runtime`, `Machine`, nor `Net` gain any tracer-related fields or checks
 attachment, `build()` will see the wrappers and include them in the slot lists.
 
 If `attach()` is called after `build()`, the tracer calls `rt.build()` to force a rebuild.
+The same rule applies when the topology changes after an earlier attachment: after adding or
+removing nodes, a new `attach()` must resynchronize wrappers and slot lists incrementally.
 
 ### Detaching the tracer
 
@@ -184,6 +201,10 @@ per-phase boundary events — useful for teaching, higher event rate.
 tracer.attach(rt)    # call before ce.run() or te.run()
 tracer.detach(rt)    # restore production path
 ```
+
+Calling `attach(rt)` more than once is valid. The operation is idempotent for
+already wrapped nodes and incremental for nodes that have been added since the
+previous call.
 
 One tracer can be attached to multiple runtimes. Each runtime gets independent node
 wrappers; all events go to the same ring buffer, distinguished by `node_id`.

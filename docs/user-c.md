@@ -805,6 +805,34 @@ rx_trace_set_state_name(&tracer, 1, BLINK_FAST, "FAST");
 rx_trace_export(&tracer, "trace.rxnt");
 ```
 
+`rx_trace_attach()` sigue siendo útil cuando quieres controlar manualmente el
+`nid` de cada nodo. Para la mayoría de los casos, sin embargo, ahora existe una
+opción más cómoda a nivel de runtime:
+
+```c
+rx_trace_init(&tracer, 0);
+
+/* Adjunta todos los nodos registrados en rt.runtime */
+rx_trace_attach_runtime(&tracer, &rt.runtime);
+```
+
+`rx_trace_attach_runtime()` es **idempotente e incremental**: si se invoca dos
+veces sobre el mismo runtime no renumera ni vuelve a adjuntar los nodos ya
+conocidos, y si entre llamadas se añaden nuevos nodos al runtime, una nueva
+invocación asigna `trace_nid` solo a esos nodos nuevos.
+
+Ejemplo:
+
+```c
+rx_trace_attach_runtime(&tracer, &rt.runtime);
+
+/* más tarde: se amplía la red */
+rx_fsm_runtime_add_machine(&rt, &aux_machine, 0, 0);
+rx_runtime_build(&rt.runtime);
+
+rx_trace_attach_runtime(&tracer, &rt.runtime);  /* solo adjunta aux_machine */
+```
+
 Para redes de Petri, registrar también lugares y transiciones:
 
 ```c
