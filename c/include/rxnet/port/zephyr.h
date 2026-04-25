@@ -29,6 +29,7 @@
  *       ${RXNET_DIR}/c/src/cyclic.c
  *       ${RXNET_DIR}/c/src/coop.c
  *       ${RXNET_DIR}/c/src/thread.c
+ *       ${RXNET_DIR}/c/src/port/zephyr.c
  *   )
  *   target_include_directories(app PRIVATE ${RXNET_DIR}/c/include)
  *
@@ -82,19 +83,12 @@ extern "C" {
 
 /* ── static stack pool ──────────────────────────────────────────────── */
 /*
- * Declared in this header so it is emitted in every translation unit
- * that includes the port.  The __attribute__((weak)) on the counter
- * ensures that only one definition survives linking even when multiple
- * .c files include this header.
- *
- * In C++ projects replace with an explicit extern declaration in one .cpp
- * file and a matching extern declaration elsewhere.
+ * Defined once in src/port/zephyr.c; declared here for all consumers.
  */
-K_THREAD_STACK_ARRAY_DEFINE(_rxnet_zephyr_stacks,
-                             RXNET_ZEPHYR_MAX_THREADS,
-                             RXNET_ZEPHYR_STACK_SIZE);
+extern struct z_thread_stack_element
+    _rxnet_zephyr_stacks[RXNET_ZEPHYR_MAX_THREADS][K_THREAD_STACK_LEN(RXNET_ZEPHYR_STACK_SIZE)];
 
-__attribute__((weak)) unsigned int _rxnet_zephyr_thread_idx = 0u;
+extern unsigned int _rxnet_zephyr_thread_idx;
 
 /* ── time ───────────────────────────────────────────────────────────── */
 
