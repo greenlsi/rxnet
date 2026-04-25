@@ -218,165 +218,171 @@ Each port defines these types and inline functions:
 The trace subsystem hooks (`RX_TRACE_NOW_NS`, `RX_TRACE_LOCK_*`) are also set
 by each port, so including `rxnet/port.h` before `rxnet/trace.h` is sufficient.
 
-### FreeRTOS / ESP-IDF
+### POSIX / CMake (Linux, macOS, desktop)
 
-Build with the ESP-IDF build system.  Add `rxnet/c` as a CMake component:
+Build and install:
 
-**`components/rxnet/CMakeLists.txt`**
-
-```cmake
-idf_component_register(
-    SRCS
-        "../../rxnet/c/src/runtime.c"
-        "../../rxnet/c/src/fsm.c"
-        "../../rxnet/c/src/pn.c"
-        "../../rxnet/c/src/cyclic.c"
-        "../../rxnet/c/src/coop.c"
-        "../../rxnet/c/src/thread.c"
-    INCLUDE_DIRS
-        "../../rxnet/c/include"
-)
+```bash
+cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build build
+cmake --install build
 ```
 
-`ESP_PLATFORM` is set automatically by ESP-IDF, so `rxnet/port/freertos.h` is
-selected without any extra flags.
+Consume in a downstream CMake project:
 
-**Tuning** (define in your component's `CMakeLists.txt` or `sdkconfig`):
+```cmake
+find_package(rxnet REQUIRED)
+target_link_libraries(myapp PRIVATE rxnet::rxnet)
+```
+
+Or without installing, build locally and add the sources directly (see
+`c/CMakeLists.txt` for the source list).
+
+### ESP-IDF (ESP32 / ESP32-S3 / ESP32-C3)
+
+rxnet ships a ready-made ESP-IDF component.  The root `CMakeLists.txt`
+contains an `idf_component_register()` call; `idf_component.yml` provides
+the component manifest for the IDF Component Manager.
+
+**Option A — local path** (sibling repo or git submodule):
+
+```cmake
+# In your project's CMakeLists.txt, before idf_build_process / project():
+list(APPEND EXTRA_COMPONENT_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/../rxnet)
+```
+
+**Option B — IDF Component Manager** (`idf_component.yml` in your app):
+
+```yaml
+dependencies:
+  rxnet:
+    path: ../rxnet   # local path, or a registry URL once published
+```
+
+`ESP_PLATFORM` is set automatically by ESP-IDF, so `rxnet/port/freertos.h`
+is selected without any extra flags.  No `port/freertos.c` is needed — the
+FreeRTOS port is header-only.
+
+**Tuning** (in your app's `CMakeLists.txt`):
 
 | Macro | Default | Meaning |
 |-------|---------|---------|
-| `RXNET_FREERTOS_STACK_SIZE` | `4096` | Stack size per rxnet task (bytes) |
+| `RXNET_FREERTOS_STACK_SIZE` | `4096` | Task stack depth (words) |
 | `RXNET_FREERTOS_TASK_PRIORITY` | `5` | FreeRTOS task priority |
-| `RXNET_FREERTOS_CORE_ID` | `-1` (any) | Pin tasks to a core (`0` or `1`) |
+| `RXNET_FREERTOS_CORE_ID` | `-1` (any) | Core affinity (`0` or `1` to pin) |
 
 ```cmake
-target_compile_definitions(${COMPONENT_LIB} PUBLIC
+idf_component_get_property(rxnet_lib rxnet COMPONENT_LIB)
+target_compile_definitions(${rxnet_lib} PUBLIC
     RXNET_FREERTOS_STACK_SIZE=8192
-    RXNET_FREERTOS_TASK_PRIORITY=10
-    RXNET_FREERTOS_CORE_ID=1       # run all rxnet tasks on core 1
+    RXNET_FREERTOS_CORE_ID=1
 )
 ```
 
-**Minimal `main.c` for ESP-IDF:**
+**Minimal `main.c`:**
 
 ```c
 #include "rxnet/fsm.h"
-#include "rxnet/thread.h"
+#include "rxnet/coop.h"
 
-static void app_main_task(void *arg)
-{
-    rx_fsm_runtime rt;
-    rx_fsm_machine machine;
-    /* ... init machines ... */
-
-    rx_thread_exec te;
-    rx_thread_exec_init(&te);
-    rx_thread_exec_add(&te, &rt.runtime);
-    rx_thread_exec_run(&te);  /* never returns */
-}
+static rx_fsm_runtime  rt;
+static rx_fsm_machine  machine;
+static rx_coop_exec    ce;
 
 void app_main(void)
 {
-    xTaskCreate(app_main_task, "rxnet", 8192, NULL, 5, NULL);
+    rx_fsm_runtime_init(&rt, 1);
+    /* ... machine init ... */
+    rx_fsm_runtime_add_machine(&rt, &machine, 10000, 0); /* 10 ms */
+
+    rx_coop_exec_init(&ce);
+    rx_coop_exec_add(&ce, &rt.runtime);
+    rx_coop_exec_run(&ce);  /* never returns */
 }
 ```
 
-### Zephyr (nRF52 / nRF54)
+### Zephyr / nRF Connect SDK (nRF52, nRF54)
 
-Add `rxnet/c` as a Zephyr module.  Create a minimal `zephyr/module.yml` in the
-rxnet repo root (or register it in your `west.yml` manifest):
+rxnet ships a Zephyr module.  `module.yml` at the repo root declares it;
+`zephyr/CMakeLists.txt` registers the library using Zephyr's native macros.
+`CONFIG_ZEPHYR` is set automatically by Zephyr, so `rxnet/port/zephyr.h`
+is selected without any extra flags.
 
-**`zephyr/module.yml`**
-
-```yaml
-name: rxnet
-build:
-  cmake: c
-  kconfig: c/Kconfig
-```
-
-**`c/Kconfig`**
-
-```kconfig
-config RXNET
-    bool "rxnet reactive synchronous runtime"
-    default y
-
-config RXNET_STACK_SIZE
-    int "Stack size for rxnet threads (bytes)"
-    default 2048
-
-config RXNET_THREAD_PRIORITY
-    int "Zephyr thread priority for rxnet threads"
-    default 5
-```
-
-**`c/CMakeLists.txt`** (Zephyr module variant)
+**Option A — `ZEPHYR_EXTRA_MODULES`** (sibling repo, no west manifest needed):
 
 ```cmake
-zephyr_library_named(rxnet)
-zephyr_library_sources(
-    src/runtime.c  src/fsm.c  src/pn.c
-    src/cyclic.c   src/coop.c src/thread.c
-)
-zephyr_library_include_directories(include)
-zephyr_library_compile_definitions(
-    RXNET_PORT_ZEPHYR
-    RXNET_ZEPHYR_STACK_SIZE=${CONFIG_RXNET_STACK_SIZE}
-    RXNET_ZEPHYR_THREAD_PRIORITY=${CONFIG_RXNET_THREAD_PRIORITY}
-)
+# In your app's CMakeLists.txt, before find_package(Zephyr):
+list(APPEND ZEPHYR_EXTRA_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../rxnet)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 ```
 
-**`prj.conf`** (add to your application):
+No `target_link_libraries` needed — `zephyr_library_named()` wires the
+library and its headers into the Zephyr build automatically.
+
+**Option B — `west.yml` manifest**:
+
+```yaml
+manifest:
+  projects:
+    - name: rxnet
+      path: rxnet
+      url: https://github.com/greenlsi/rxnet
+      revision: main
+```
+
+**Required `prj.conf` option:**
 
 ```
-CONFIG_RXNET=y
-CONFIG_RXNET_STACK_SIZE=4096
-CONFIG_RXNET_THREAD_PRIORITY=5
-CONFIG_PTHREAD_IPC=n      # use native Zephyr primitives, not POSIX wrapper
+CONFIG_EVENTS=y   # enables k_condvar, used by rx_barrier_wait
+```
+
+**Tuning** (override via `-D` or `prj.conf`):
+
+| Macro | Default | Meaning |
+|-------|---------|---------|
+| `RXNET_ZEPHYR_STACK_SIZE` | `2048` | Stack per rxnet thread (bytes) |
+| `RXNET_ZEPHYR_THREAD_PRIORITY` | `5` | Zephyr thread priority |
+| `RXNET_ZEPHYR_MAX_THREADS` | `RXNET_MAX_RUNTIME_NODES × RXNET_THREAD_MAX_RUNTIMES` | Pre-allocated stack pool size |
+
+```cmake
+# In your app's CMakeLists.txt (after find_package(Zephyr)):
+target_compile_definitions(app PRIVATE
+    RXNET_ZEPHYR_STACK_SIZE=4096
+    RXNET_ZEPHYR_THREAD_PRIORITY=3
+)
 ```
 
 **Stack pool sizing**  
-Zephyr requires thread stacks declared at compile time.  The port pre-allocates
-a pool of `RXNET_ZEPHYR_MAX_THREADS` stacks, where:
-
-```
-RXNET_ZEPHYR_MAX_THREADS = RXNET_MAX_RUNTIME_NODES × RXNET_THREAD_MAX_RUNTIMES
-```
-
-Both constants are set in `rxnet/config.h` (defaults: 8 nodes × 4 runtimes = 32
-stacks).  Increase `RXNET_ZEPHYR_MAX_THREADS` directly if you need more:
+Zephyr requires thread stacks to be declared at compile time.  The port
+pre-allocates a pool of `RXNET_ZEPHYR_MAX_THREADS` stacks in
+`src/port/zephyr.c`.  Defaults from `config.h`: 16 nodes × 8 runtimes = 128
+slots.  Override if your application needs more:
 
 ```cmake
-zephyr_library_compile_definitions(RXNET_ZEPHYR_MAX_THREADS=16)
+target_compile_definitions(app PRIVATE RXNET_ZEPHYR_MAX_THREADS=16)
 ```
 
-**Minimal application thread:**
+**Minimal `main.c`:**
 
 ```c
 #include "rxnet/fsm.h"
-#include "rxnet/thread.h"
-#include <zephyr/kernel.h>
+#include "rxnet/coop.h"
 
-K_THREAD_STACK_DEFINE(main_stack, 4096);
-static struct k_thread main_thread;
+static rx_fsm_runtime  rt;
+static rx_fsm_machine  machine;
+static rx_coop_exec    ce;
 
-static void rxnet_entry(void *a, void *b, void *c)
+int main(void)
 {
-    rx_fsm_runtime rt;
-    rx_fsm_machine machine;
-    /* ... init machines ... */
+    rx_fsm_runtime_init(&rt, 1);
+    /* ... machine init ... */
+    rx_fsm_runtime_add_machine(&rt, &machine, 10000, 0); /* 10 ms */
 
-    rx_thread_exec te;
-    rx_thread_exec_init(&te);
-    rx_thread_exec_add(&te, &rt.runtime);
-    rx_thread_exec_run(&te);  /* never returns */
-}
+    rx_coop_exec_init(&ce);
+    rx_coop_exec_add(&ce, &rt.runtime);
+    rx_coop_exec_run(&ce);  /* never returns */
 
-void main(void)
-{
-    k_thread_create(&main_thread, main_stack, K_THREAD_STACK_SIZEOF(main_stack),
-                    rxnet_entry, NULL, NULL, NULL, 5, 0, K_NO_WAIT);
+    return 0;
 }
 ```
 

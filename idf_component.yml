@@ -1,0 +1,3 @@
+version: "1.0.0"
+description: Synchronous runtime for reactive models (FSM and Petri Nets)
+url: https://github.com/greenlsi/rxnet
