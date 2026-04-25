@@ -214,6 +214,7 @@ int rx_pn_net_init(
     net->node.vtable = &RX_PN_NET_VTABLE;
     net->node.latch_inputs_cb = NULL;
     net->node.dump_outputs_cb = NULL;
+    RX_NODE_TRACE_INIT(&net->node);
     net->latch_inputs = latch_inputs != NULL ? latch_inputs : rx_pn_noop;
     net->dump_outputs = dump_outputs != NULL ? dump_outputs : rx_pn_noop;
     net->place_count = place_count;

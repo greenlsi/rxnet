@@ -137,6 +137,7 @@ void rx_fsm_machine_init(
     machine->node.vtable = &RX_FSM_MACHINE_VTABLE;
     machine->node.latch_inputs_cb = NULL;
     machine->node.dump_outputs_cb = NULL;
+    RX_NODE_TRACE_INIT(&machine->node);
     machine->name = name;
     machine->state = initial_state;
     machine->next_state = initial_state;

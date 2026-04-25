@@ -203,6 +203,10 @@ void rx_trace_write(rx_trace_buf_t *buf, uint8_t kind, uint8_t nid,
                        (uint16_t)(ph), 0, 0); \
 } while (0)
 
+/* Called from node init functions to ensure trace fields start clean. */
+#define RX_NODE_TRACE_INIT(node) \
+    do { (node)->trace = NULL; (node)->trace_nid = 0; } while (0)
+
 #else /* ── RX_TRACE_ENABLE not defined: all macros are no-ops ─────────── */
 
 #define RX_TRACE_NODE_START(node)         ((void)0)
@@ -211,5 +215,6 @@ void rx_trace_write(rx_trace_buf_t *buf, uint8_t kind, uint8_t nid,
 #define RX_TRACE_PN(node, tidx)           ((void)0)
 #define RX_TRACE_PH_START(node, ph)       ((void)0)
 #define RX_TRACE_PH_END(node, ph)         ((void)0)
+#define RX_NODE_TRACE_INIT(node)          ((void)(node))
 
 #endif /* RX_TRACE_ENABLE */
