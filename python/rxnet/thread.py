@@ -33,7 +33,7 @@ Usage::
 
     te = ThreadExecutive()
     te.add(rt)          # one runtime: all nodes get threads except the last
-    te.run()            # never returns
+    te.run()            # returns when te.stop() is requested
 
 Multiple runtimes::
 
@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from .cyclic import sleep_until
@@ -68,8 +69,18 @@ class ThreadExecutive:
         may be more suitable.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_stop: Callable[[], None] | None = None) -> None:
         self._runtimes: list[Any] = []
+        self._stop_requested = threading.Event()
+        self._on_stop = on_stop
+
+    def stop(self) -> None:
+        """Request all node loops to stop at a hyperperiod boundary."""
+        self._stop_requested.set()
+
+    def on_stop(self, callback: Callable[[], None] | None) -> None:
+        """Register an optional callback run once before ``run`` returns."""
+        self._on_stop = callback
 
     def add(self, runtime: Any) -> None:
         """Register *runtime*.  Its base period must be > 0."""
@@ -85,8 +96,8 @@ class ThreadExecutive:
     def run(self) -> None:
         """Spawn node threads and enter the main-thread node loop.
 
-        Never returns.  The last node of the last registered runtime runs
-        in the calling thread.
+        The last node of the last registered runtime runs in the calling
+        thread.  Returns when :meth:`stop` is requested.
         """
         if not self._runtimes:
             raise RuntimeError("no runtimes registered")
@@ -96,6 +107,8 @@ class ThreadExecutive:
         main_loop_fn: Any = None
 
         total_groups = len(self._runtimes)
+
+        self._stop_requested.clear()
 
         for group_idx, rt in enumerate(self._runtimes):
             ctx     = rt.context
@@ -151,6 +164,7 @@ class ThreadExecutive:
                     commit_bs=commit_bs,
                     dump_bs=dump_bs,
                     nslots=nslots,
+                    stop_requested=self._stop_requested,
                 ) -> None:
                     next_tick = t0
                     base_tick = 0
@@ -177,6 +191,8 @@ class ThreadExecutive:
 
                         next_tick += period_s
                         base_tick += step
+                        if stop_requested.is_set() and base_tick % nslots == 0:
+                            return
 
                 if is_last:
                     main_loop_fn = make_loop
@@ -187,4 +203,11 @@ class ThreadExecutive:
 
         # The last node runs in the calling (main) thread.
         assert main_loop_fn is not None
-        main_loop_fn()
+        try:
+            main_loop_fn()
+        finally:
+            self._stop_requested.set()
+            for t in threads:
+                t.join()
+            if self._on_stop is not None:
+                self._on_stop()

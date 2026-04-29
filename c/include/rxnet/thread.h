@@ -32,13 +32,13 @@
  *   rx_thread_exec te;
  *   rx_thread_exec_init(&te);
  *   rx_thread_exec_add(&te, &rt.runtime);
- *   rx_thread_exec_run(&te);  // never returns
+ *   rx_thread_exec_run(&te);  // returns after stop
  *
  * Usage — multiple runtimes (mixed PN + FSM):
  *
  *   rx_thread_exec_add(&te, &pn_rt.runtime);   // PN nodes → threads
  *   rx_thread_exec_add(&te, &cli_rt.runtime);  // cli node → main thread
- *   rx_thread_exec_run(&te);  // never returns
+ *   rx_thread_exec_run(&te);  // returns after stop
  */
 
 #include "rxnet/config.h"
@@ -78,6 +78,9 @@ struct rx_thread_exec {
     rx_thread_group groups[RXNET_THREAD_MAX_RUNTIMES];
     int             ngroups;
     rx_tick_t       t0;   /* common start time for all groups */
+    volatile int    stop_requested;
+    void          (*on_stop)(void *user);
+    void           *on_stop_user;
 };
 
 /* Initialise to empty. */
@@ -98,9 +101,17 @@ int rx_thread_exec_add(rx_thread_exec *te, rx_runtime *rt);
  *
  * Spawns one pthread per node across all groups, except the last node of
  * the last group which runs on the calling (main) thread.
- * Never returns.
+ * Returns after rx_thread_exec_stop() is requested.
  */
 void rx_thread_exec_run(rx_thread_exec *te);
+
+/* Request rx_thread_exec_run() to return at a hyperperiod boundary. */
+void rx_thread_exec_stop(rx_thread_exec *te);
+
+/* Register an optional callback executed once before run() returns. */
+void rx_thread_exec_on_stop(rx_thread_exec *te,
+                            void (*callback)(void *user),
+                            void *user);
 
 #ifdef __cplusplus
 }

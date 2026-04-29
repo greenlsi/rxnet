@@ -42,8 +42,9 @@ rx_coop_exec_run(rx_coop_exec *ce)
     now = rx_tick_now();
     for (i = 0; i < ce->ntasks; ++i)
         ce->tasks[i].next_tick = now;
+    ce->stop_requested = 0;
 
-    for (;;) {
+    while (!ce->stop_requested) {
         now = rx_tick_now();
 
         /* Run every runtime whose deadline has passed. */
@@ -55,6 +56,7 @@ rx_coop_exec_run(rx_coop_exec *ce)
                 ce->tasks[i].next_tick =
                     rx_tick_add_us(ce->tasks[i].next_tick,
                                    ce->tasks[i].rt->period_us);
+                if (ce->stop_requested) break;
             }
         }
 
@@ -64,6 +66,25 @@ rx_coop_exec_run(rx_coop_exec *ce)
             if (rx_tick_compare(ce->tasks[i].next_tick, nearest) < 0)
                 nearest = ce->tasks[i].next_tick;
         }
-        rx_tick_sleep_until(nearest);
+        if (!ce->stop_requested)
+            rx_tick_sleep_until(nearest);
     }
+
+    if (ce->on_stop)
+        ce->on_stop(ce->on_stop_user);
+}
+
+void
+rx_coop_exec_stop(rx_coop_exec *ce)
+{
+    ce->stop_requested = 1;
+}
+
+void
+rx_coop_exec_on_stop(rx_coop_exec *ce,
+                     void (*callback)(void *user),
+                     void *user)
+{
+    ce->on_stop = callback;
+    ce->on_stop_user = user;
 }

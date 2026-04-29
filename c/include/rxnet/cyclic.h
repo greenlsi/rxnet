@@ -24,7 +24,7 @@
  *   rx_cyclic_exec_add(&ce, &fast_rt.runtime, 10000);   // 10 ms
  *   rx_cyclic_exec_add(&ce, &slow_rt.runtime, 20000);   // 20 ms
  *   rx_cyclic_exec_add(&ce, &cli_rt.runtime,  10000);   // 10 ms
- *   rx_cyclic_exec_run(&ce);                            // never returns
+ *   rx_cyclic_exec_run(&ce);                            // returns after stop
  *
  * rx_fsm_runtime and rx_pn_runtime both embed rx_runtime as their first
  * member, so &my_rt.runtime gives the rx_runtime * to pass here.
@@ -63,6 +63,9 @@ typedef struct {
     rx_ce_slot slots[RXNET_CE_MAX_SLOTS];
     int        nslots;   /* 0 until rx_cyclic_exec_build() is called */
     long       base_us;
+    volatile int stop_requested;
+    void     (*on_stop)(void *user);
+    void      *on_stop_user;
 } rx_cyclic_exec;
 
 /* Initialise to empty. */
@@ -87,8 +90,16 @@ int rx_cyclic_exec_add(rx_cyclic_exec *ce, rx_runtime *rt);
 int rx_cyclic_exec_build(rx_cyclic_exec *ce);
 
 /* Enter the scheduler loop.  Builds the table first if not yet built.
- * Never returns. */
+ * Returns after rx_cyclic_exec_stop() is requested. */
 void rx_cyclic_exec_run(rx_cyclic_exec *ce);
+
+/* Request rx_cyclic_exec_run() to return at the next safe point. */
+void rx_cyclic_exec_stop(rx_cyclic_exec *ce);
+
+/* Register an optional callback executed once before run() returns. */
+void rx_cyclic_exec_on_stop(rx_cyclic_exec *ce,
+                            void (*callback)(void *user),
+                            void *user);
 
 #ifdef __cplusplus
 }

@@ -1,11 +1,10 @@
 // Copyright 2026 Jose M. Moya <jm.moya@upm.es>
 // SPDX-License-Identifier: MIT
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 
+#include "rxnet/coop.h"
 #include "rxnet/fsm.h"
 
 #include "app_driver.h"
@@ -204,35 +203,6 @@ cmd_quit(rx_fsm_context *ctx, cli_machine_data *cli,
     exit(0);
 }
 
-static struct timespec
-timespec_add_us(struct timespec t, long us)
-{
-    t.tv_nsec += us * 1000L;
-    while (t.tv_nsec >= 1000000000L) {
-        t.tv_nsec -= 1000000000L;
-        ++t.tv_sec;
-    }
-    return t;
-}
-
-static int
-timespec_compare(struct timespec a, struct timespec b)
-{
-    if (a.tv_sec < b.tv_sec) {
-        return -1;
-    }
-    if (a.tv_sec > b.tv_sec) {
-        return 1;
-    }
-    if (a.tv_nsec < b.tv_nsec) {
-        return -1;
-    }
-    if (a.tv_nsec > b.tv_nsec) {
-        return 1;
-    }
-    return 0;
-}
-
 int
 main(void)
 {
@@ -248,8 +218,7 @@ main(void)
         .blink_c_machine = &blink_c_machine,
     };
     cli_machine_data cli_data;
-    struct timespec now;
-    struct timespec next_tick;
+    rx_coop_exec ce;
 
     if (rx_fsm_runtime_init(&runtime, 4) != 0) {
         fprintf(stderr, "rx_fsm_runtime_init failed\n");
@@ -276,10 +245,10 @@ main(void)
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
-    if (rx_fsm_runtime_add_machine(&runtime, &blink_a_machine, 0, 0) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &blink_b_machine, 0, 0) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &blink_c_machine, 0, 0) != 0 ||
-        rx_fsm_runtime_add_machine(&runtime, &cli_machine, 0, 0) != 0) {
+    if (rx_fsm_runtime_add_machine(&runtime, &blink_a_machine, PERIOD_US, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &blink_b_machine, PERIOD_US, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &blink_c_machine, PERIOD_US, 0) != 0 ||
+        rx_fsm_runtime_add_machine(&runtime, &cli_machine, PERIOD_US, 0) != 0) {
         fprintf(stderr, "rx_fsm_runtime_add_machine failed\n");
         rx_fsm_runtime_free(&runtime);
         return 1;
@@ -289,61 +258,9 @@ main(void)
     cmd_status(&runtime.context, &cli_data, "status", &app_data);
     cli_fsm_print_prompt(&cli_data);
 
-    if (clock_gettime(CLOCK_MONOTONIC, &next_tick) != 0) {
-        fprintf(stderr, "clock_gettime failed\n");
-        rx_fsm_runtime_free(&runtime);
-        return 1;
-    }
-    next_tick = timespec_add_us(next_tick, PERIOD_US);
+    rx_coop_exec_init(&ce);
+    rx_coop_exec_add(&ce, &runtime.runtime);
+    rx_coop_exec_run(&ce); /* never returns */
 
-    while (1) {
-        if (rx_fsm_tick(&runtime) != 0) {
-            fprintf(stderr, "rx_fsm_tick failed\n");
-            break;
-        }
-
-        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-            fprintf(stderr, "clock_gettime failed\n");
-            break;
-        }
-
-        while (timespec_compare(now, next_tick) >= 0) {
-            next_tick = timespec_add_us(next_tick, PERIOD_US);
-        }
-
-        while (1) {
-            struct timespec sleep_time = {
-                .tv_sec = next_tick.tv_sec - now.tv_sec,
-                .tv_nsec = next_tick.tv_nsec - now.tv_nsec,
-            };
-
-            if (sleep_time.tv_nsec < 0) {
-                sleep_time.tv_nsec += 1000000000L;
-                --sleep_time.tv_sec;
-            }
-
-            if (sleep_time.tv_sec < 0) {
-                break;
-            }
-
-            if (nanosleep(&sleep_time, NULL) == 0) {
-                break;
-            }
-
-            if (errno != EINTR) {
-                fprintf(stderr, "nanosleep failed\n");
-                break;
-            }
-
-            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-                fprintf(stderr, "clock_gettime failed\n");
-                break;
-            }
-        }
-
-        next_tick = timespec_add_us(next_tick, PERIOD_US);
-    }
-
-    rx_fsm_runtime_free(&runtime);
     return 0;
 }

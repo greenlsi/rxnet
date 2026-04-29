@@ -8,7 +8,8 @@
 
 static void rx_fsm_machine_latch_inputs(rx_node *node, rx_context *ctx) {
     rx_fsm_machine *machine = (rx_fsm_machine *)node;
-    machine->latch_inputs(ctx, machine->user);
+    if (machine->latch_inputs)
+        machine->latch_inputs(ctx, machine->user);
 }
 
 static void rx_fsm_machine_evaluate(rx_node *node, rx_context *ctx) {
@@ -48,7 +49,8 @@ static void rx_fsm_machine_commit(rx_node *node, rx_context *ctx) {
 
 static void rx_fsm_machine_dump_outputs(rx_node *node, rx_context *ctx) {
     rx_fsm_machine *machine = (rx_fsm_machine *)node;
-    machine->dump_outputs(ctx, machine->user);
+    if (machine->dump_outputs)
+        machine->dump_outputs(ctx, machine->user);
 }
 
 static const rx_node_vtable RX_FSM_MACHINE_VTABLE = {
@@ -181,10 +183,6 @@ int rx_fsm_runtime_add_machine(rx_fsm_runtime *runtime, rx_fsm_machine *machine,
     if (runtime == NULL || machine == NULL) {
         return -1;
     }
-    if (machine->latch_inputs == NULL || machine->dump_outputs == NULL) {
-        return -1;
-    }
-
     machine->node.vtable = &RX_FSM_MACHINE_VTABLE;
     return rx_runtime_add_node(&runtime->runtime, &machine->node, period_us, deadline_us);
 }

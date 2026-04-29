@@ -311,6 +311,27 @@ class TestCyclicExecutive:
         assert hyper_us == 20_000
         assert n_slots  == 2
 
+    def test_stop_returns_and_runs_callback(self) -> None:
+        from rxnet.cyclic import CyclicExecutive
+
+        stopped = threading.Event()
+        ce = CyclicExecutive(on_stop=stopped.set)
+
+        class StopNode(CountingNode):
+            def dump_outputs(self, ctx: Context) -> None:
+                super().dump_outputs(ctx)
+                ce.stop()
+
+        rt = Runtime()
+        node = StopNode("a")
+        rt.add_node(node, period_us=10_000)
+
+        ce.add(rt)
+        ce.run()
+
+        assert node.ticks == 1
+        assert stopped.is_set()
+
 
 # ------------------------------------------------------------------ #
 # CoopExecutive                                                        #
@@ -347,6 +368,27 @@ class TestCoopExecutive:
         ce.add(rt)
         assert rt._built
 
+    def test_stop_returns_and_runs_callback(self) -> None:
+        from rxnet.coop import CoopExecutive
+
+        stopped = threading.Event()
+        ce = CoopExecutive(on_stop=stopped.set)
+
+        class StopNode(CountingNode):
+            def dump_outputs(self, ctx: Context) -> None:
+                super().dump_outputs(ctx)
+                ce.stop()
+
+        rt = Runtime()
+        node = StopNode("a")
+        rt.add_node(node, period_us=10_000)
+
+        ce.add(rt)
+        ce.run()
+
+        assert node.ticks == 1
+        assert stopped.is_set()
+
 
 # ------------------------------------------------------------------ #
 # ThreadExecutive                                                      #
@@ -382,6 +424,27 @@ class TestThreadExecutive:
         te = ThreadExecutive()
         te.add(rt)
         assert rt._built
+
+    def test_stop_returns_and_runs_callback(self) -> None:
+        from rxnet.thread import ThreadExecutive
+
+        stopped = threading.Event()
+        te = ThreadExecutive(on_stop=stopped.set)
+
+        class StopNode(CountingNode):
+            def dump_outputs(self, ctx: Context) -> None:
+                super().dump_outputs(ctx)
+                te.stop()
+
+        rt = Runtime()
+        node = StopNode("a")
+        rt.add_node(node, period_us=10_000)
+
+        te.add(rt)
+        te.run()
+
+        assert node.ticks == 1
+        assert stopped.is_set()
 
     def test_bsp_global_latch_before_per_node_latch(self) -> None:
         """The global latch snapshot is captured before any per-node latch_inputs runs.

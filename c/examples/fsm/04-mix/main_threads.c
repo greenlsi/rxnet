@@ -20,7 +20,7 @@
  *   slot 0 (t=0,20,40,...): light_a + blink_b + auto_c + cli  barrier(4)
  *   slot 1 (t=10,30,50,...): light_a + blink_b + cli           barrier(3)
  *
- * Contrast with main_cli.c (cyclic executive):
+ * Contrast with main_cyclic.c (cyclic executive):
  *   - Cyclic exec: one thread, sequential nodes per slot.
  *   - par_exec: one thread per node; latch, evaluate, and commit run in
  *     parallel across co-active nodes, synchronised by barriers.

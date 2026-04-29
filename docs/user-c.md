@@ -428,7 +428,7 @@ rx_cyclic_exec ce;
 rx_cyclic_exec_init(&ce);
 rx_cyclic_exec_add(&ce, &fast_rt.runtime);   /* período 10 ms */
 rx_cyclic_exec_add(&ce, &slow_rt.runtime);   /* período 20 ms */
-rx_cyclic_exec_run(&ce);  /* nunca retorna */
+rx_cyclic_exec_run(&ce);  /* retorna tras rx_cyclic_exec_stop(&ce) */
 ```
 
 El executor calcula automáticamente:
@@ -453,7 +453,7 @@ rx_coop_exec ce;
 rx_coop_exec_init(&ce);
 rx_coop_exec_add(&ce, &rt_a.runtime);   /* período 10 ms */
 rx_coop_exec_add(&ce, &rt_b.runtime);   /* período 15 ms */
-rx_coop_exec_run(&ce);  /* nunca retorna */
+rx_coop_exec_run(&ce);  /* retorna tras rx_coop_exec_stop(&ce) */
 ```
 
 El executor avanza cada deadline desde su último disparo (no desde "ahora"),
@@ -481,8 +481,12 @@ rx_thread_exec te;
 rx_thread_exec_init(&te);
 rx_thread_exec_add(&te, &pn_rt.runtime);   /* nodos PN → threads */
 rx_thread_exec_add(&te, &cli_rt.runtime);  /* CLI → hilo principal */
-rx_thread_exec_run(&te);  /* nunca retorna */
+rx_thread_exec_run(&te);  /* retorna tras rx_thread_exec_stop(&te) */
 ```
+
+Todos los executors ofrecen un hook `rx_*_exec_on_stop()` para ejecutar una
+operación de cierre de la aplicación/modelo una vez antes de que `run()`
+retorne.
 
 **Cuándo usarlo**: varios nodos con trabajo de cómputo intensivo que se
 benefician del paralelismo real; sistemas con múltiples cores.

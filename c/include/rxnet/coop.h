@@ -27,7 +27,7 @@
  *   rx_coop_exec ce;
  *   rx_coop_exec_init(&ce);
  *   rx_coop_exec_add(&ce, &rt.runtime);
- *   rx_coop_exec_run(&ce);   // never returns
+ *   rx_coop_exec_run(&ce);   // returns after stop
  */
 
 #include "rxnet/config.h"
@@ -45,6 +45,9 @@ typedef struct {
 typedef struct {
     rx_coop_task tasks[RXNET_CE_MAX_TASKS];
     int          ntasks;
+    volatile int stop_requested;
+    void       (*on_stop)(void *user);
+    void        *on_stop_user;
 } rx_coop_exec;
 
 /* Initialise to empty. */
@@ -61,8 +64,16 @@ void rx_coop_exec_init(rx_coop_exec *ce);
  */
 int rx_coop_exec_add(rx_coop_exec *ce, rx_runtime *rt);
 
-/* Enter the scheduler loop.  Never returns. */
+/* Enter the scheduler loop.  Returns after rx_coop_exec_stop() is requested. */
 void rx_coop_exec_run(rx_coop_exec *ce);
+
+/* Request rx_coop_exec_run() to return at the next safe point. */
+void rx_coop_exec_stop(rx_coop_exec *ce);
+
+/* Register an optional callback executed once before run() returns. */
+void rx_coop_exec_on_stop(rx_coop_exec *ce,
+                          void (*callback)(void *user),
+                          void *user);
 
 #ifdef __cplusplus
 }

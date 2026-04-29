@@ -72,7 +72,7 @@ from rxnet import CyclicExecutive
 
 ce = CyclicExecutive()
 ce.add(rt)
-ce.run()   # never returns
+ce.run()   # returns when ce.stop() is requested
 ```
 
 ### `CoopExecutive` — cooperative deadline scheduler
@@ -86,7 +86,7 @@ from rxnet import CoopExecutive
 
 ce = CoopExecutive()
 ce.add(rt)
-ce.run()   # never returns
+ce.run()   # returns when ce.stop() is requested
 ```
 
 ### `ThreadExecutive` — BSP thread-per-node
@@ -103,8 +103,12 @@ from rxnet import ThreadExecutive
 
 te = ThreadExecutive()
 te.add(rt)
-te.run()   # never returns — last node runs in this thread
+te.run()   # returns when te.stop() is requested
 ```
+
+All executors accept an optional `on_stop` callback, or one can be
+registered later with `.on_stop(callback)`, to run application/model
+shutdown logic once before `run()` returns.
 
 ## Basic integration pattern (FSM)
 

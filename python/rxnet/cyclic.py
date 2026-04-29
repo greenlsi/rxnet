@@ -28,7 +28,7 @@ Usage::
 
     ce = CyclicExecutive()
     ce.add(rt)
-    ce.run()                  # never returns
+    ce.run()                  # returns when ce.stop() is requested
 
 Multiple runtimes with different base periods can be registered::
 
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from typing import Any
 
 
@@ -69,8 +70,18 @@ class CyclicExecutive:
     the cooperative scheduler (``CoopExecutive``) instead.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_stop: Callable[[], None] | None = None) -> None:
         self._runtimes: list[Any] = []  # Runtime objects
+        self._stop_requested = False
+        self._on_stop = on_stop
+
+    def stop(self) -> None:
+        """Request the scheduler loop to stop at the next safe point."""
+        self._stop_requested = True
+
+    def on_stop(self, callback: Callable[[], None] | None) -> None:
+        """Register an optional callback run once before ``run`` returns."""
+        self._on_stop = callback
 
     def add(self, runtime: Any) -> None:
         """Register *runtime* to be driven by the cyclic executive.
@@ -90,7 +101,7 @@ class CyclicExecutive:
     def run(self) -> None:
         """Build the outer dispatch table and enter the scheduler loop.
 
-        Never returns.
+        Returns when :meth:`stop` is requested.
         """
         if not self._runtimes:
             raise RuntimeError("no runtimes registered")
@@ -110,10 +121,18 @@ class CyclicExecutive:
         next_tick  = time.monotonic()
         slot       = 0
 
-        while True:
-            for rt in slots[slot]:
-                rt.tick()
+        self._stop_requested = False
+        try:
+            while not self._stop_requested:
+                for rt in slots[slot]:
+                    rt.tick()
+                    if self._stop_requested:
+                        break
 
-            slot = (slot + 1) % n_slots
-            next_tick += base_s
-            sleep_until(next_tick)
+                slot = (slot + 1) % n_slots
+                next_tick += base_s
+                if not self._stop_requested:
+                    sleep_until(next_tick)
+        finally:
+            if self._on_stop is not None:
+                self._on_stop()

@@ -74,7 +74,7 @@ Suitable for bare-metal and simple RTOS configurations.
 rx_cyclic_exec ce;
 rx_cyclic_exec_init(&ce);
 rx_cyclic_exec_add(&ce, &runtime.runtime);
-rx_cyclic_exec_run(&ce); /* never returns */
+rx_cyclic_exec_run(&ce); /* returns after rx_cyclic_exec_stop(&ce) */
 ```
 
 ### `rx_coop_exec` — cooperative multi-rate
@@ -87,7 +87,7 @@ cooperative RTOS patterns.
 rx_coop_exec ce;
 rx_coop_exec_init(&ce);
 rx_coop_exec_add(&ce, &runtime.runtime);
-rx_coop_exec_run(&ce); /* never returns */
+rx_coop_exec_run(&ce); /* returns after rx_coop_exec_stop(&ce) */
 ```
 
 Multiple runtimes can be registered; the scheduler picks the earliest deadline across all of them.
@@ -107,8 +107,11 @@ The last node of the last runtime runs in the calling (main) thread.
 rx_thread_exec te;
 rx_thread_exec_init(&te);
 rx_thread_exec_add(&te, &runtime.runtime);  /* one runtime: all nodes get threads */
-rx_thread_exec_run(&te); /* never returns */
+rx_thread_exec_run(&te); /* returns after rx_thread_exec_stop(&te) */
 ```
+
+Each executor also has an `rx_*_exec_on_stop()` hook for application/model
+shutdown logic that must run once before `rx_*_exec_run()` returns.
 
 Multiple runtimes can be registered; each forms an independent barrier group:
 
@@ -297,7 +300,7 @@ void app_main(void)
 
     rx_coop_exec_init(&ce);
     rx_coop_exec_add(&ce, &rt.runtime);
-    rx_coop_exec_run(&ce);  /* never returns */
+    rx_coop_exec_run(&ce);  /* returns after rx_coop_exec_stop(&ce) */
 }
 ```
 
@@ -380,7 +383,7 @@ int main(void)
 
     rx_coop_exec_init(&ce);
     rx_coop_exec_add(&ce, &rt.runtime);
-    rx_coop_exec_run(&ce);  /* never returns */
+    rx_coop_exec_run(&ce);  /* returns after rx_coop_exec_stop(&ce) */
 
     return 0;
 }

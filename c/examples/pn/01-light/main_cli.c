@@ -1,11 +1,10 @@
 // Copyright 2026 Jose M. Moya <jm.moya@upm.es>
 // SPDX-License-Identifier: MIT
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 
+#include "rxnet/coop.h"
 #include "rxnet/fsm.h"
 #include "rxnet/pn.h"
 
@@ -104,33 +103,6 @@ cmd_quit(rx_fsm_context *ctx, cli_machine_data *cli,
 }
 
 /* ------------------------------------------------------------------ */
-/* Timing helpers                                                       */
-/* ------------------------------------------------------------------ */
-
-static struct timespec
-timespec_add_us(struct timespec t, long us)
-{
-    t.tv_nsec += us * 1000L;
-    while (t.tv_nsec >= 1000000000L) {
-        t.tv_nsec -= 1000000000L;
-        ++t.tv_sec;
-    }
-    return t;
-}
-
-static int
-timespec_compare(struct timespec a, struct timespec b)
-{
-    if (a.tv_sec != b.tv_sec) {
-        return a.tv_sec < b.tv_sec ? -1 : 1;
-    }
-    if (a.tv_nsec != b.tv_nsec) {
-        return a.tv_nsec < b.tv_nsec ? -1 : 1;
-    }
-    return 0;
-}
-
-/* ------------------------------------------------------------------ */
 /* Main                                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -145,8 +117,7 @@ main(void)
 
     app_data app = {&light_a, &light_b, &light_c};
     cli_machine_data cli_data;
-
-    struct timespec now, next_tick;
+    rx_coop_exec ce;
 
     /* Initialise runtimes: 3 PN nets + 1 CLI FSM machine. */
     if (rx_pn_runtime_init(&pn_runtime, 3) != 0) {
@@ -169,9 +140,9 @@ main(void)
         return 1;
     }
 
-    if (rx_pn_runtime_add_net(&pn_runtime, &light_a, 0, 0) != 0 ||
-        rx_pn_runtime_add_net(&pn_runtime, &light_b, 0, 0) != 0 ||
-        rx_pn_runtime_add_net(&pn_runtime, &light_c, 0, 0) != 0) {
+    if (rx_pn_runtime_add_net(&pn_runtime, &light_a, PERIOD_US, 0) != 0 ||
+        rx_pn_runtime_add_net(&pn_runtime, &light_b, PERIOD_US, 0) != 0 ||
+        rx_pn_runtime_add_net(&pn_runtime, &light_c, PERIOD_US, 0) != 0) {
         fprintf(stderr, "rx_pn_runtime_add_net failed\n");
         rx_pn_net_free(&light_a);
         rx_pn_net_free(&light_b);
@@ -198,7 +169,7 @@ main(void)
     }
     cli_fsm_create(&cli_machine, "cli", &cli_data);
 
-    if (rx_fsm_runtime_add_machine(&fsm_runtime, &cli_machine, 0, 0) != 0) {
+    if (rx_fsm_runtime_add_machine(&fsm_runtime, &cli_machine, PERIOD_US, 0) != 0) {
         fprintf(stderr, "rx_fsm_runtime_add_machine failed\n");
         rx_pn_runtime_free(&pn_runtime);
         rx_fsm_runtime_free(&fsm_runtime);
@@ -209,73 +180,10 @@ main(void)
     cmd_status(&fsm_runtime.context, &cli_data, "status", &app);
     cli_fsm_print_prompt(&cli_data);
 
-    if (clock_gettime(CLOCK_MONOTONIC, &next_tick) != 0) {
-        fprintf(stderr, "clock_gettime failed\n");
-        rx_pn_runtime_free(&pn_runtime);
-        rx_fsm_runtime_free(&fsm_runtime);
-        return 1;
-    }
-    next_tick = timespec_add_us(next_tick, PERIOD_US);
+    rx_coop_exec_init(&ce);
+    rx_coop_exec_add(&ce, &fsm_runtime.runtime);
+    rx_coop_exec_add(&ce, &pn_runtime.runtime);
+    rx_coop_exec_run(&ce); /* never returns */
 
-    while (1) {
-        /*
-         * FSM tick first: processes keyboard input and enqueues button
-         * triggers via deferred actions.  By the time rx_fsm_tick returns
-         * the button event flag is already set in app_driver.
-         *
-         * PN tick second: latch phase sees the freshly set button event
-         * and adds a REQUEST token in the same iteration.
-         */
-        if (rx_fsm_tick(&fsm_runtime) != 0) {
-            fprintf(stderr, "rx_fsm_tick failed\n");
-            break;
-        }
-        if (rx_pn_tick(&pn_runtime) != 0) {
-            fprintf(stderr, "rx_pn_tick failed\n");
-            break;
-        }
-
-        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-            fprintf(stderr, "clock_gettime failed\n");
-            break;
-        }
-
-        while (timespec_compare(now, next_tick) >= 0) {
-            next_tick = timespec_add_us(next_tick, PERIOD_US);
-        }
-
-        while (1) {
-            struct timespec sleep_time = {
-                .tv_sec  = next_tick.tv_sec  - now.tv_sec,
-                .tv_nsec = next_tick.tv_nsec - now.tv_nsec,
-            };
-            if (sleep_time.tv_nsec < 0) {
-                sleep_time.tv_nsec += 1000000000L;
-                --sleep_time.tv_sec;
-            }
-            if (sleep_time.tv_sec < 0) {
-                break;
-            }
-            if (nanosleep(&sleep_time, NULL) == 0) {
-                break;
-            }
-            if (errno != EINTR) {
-                fprintf(stderr, "nanosleep failed\n");
-                break;
-            }
-            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-                fprintf(stderr, "clock_gettime failed\n");
-                break;
-            }
-        }
-
-        next_tick = timespec_add_us(next_tick, PERIOD_US);
-    }
-
-    rx_pn_net_free(&light_a);
-    rx_pn_net_free(&light_b);
-    rx_pn_net_free(&light_c);
-    rx_pn_runtime_free(&pn_runtime);
-    rx_fsm_runtime_free(&fsm_runtime);
     return 0;
 }

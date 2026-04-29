@@ -97,14 +97,36 @@ rx_cyclic_exec_run(rx_cyclic_exec *ce)
 
     next_tick = rx_tick_now();
     slot = 0;
+    ce->stop_requested = 0;
 
-    for (;;) {
-        for (s = 0; s < ce->slots[slot].count; ++s)
+    while (!ce->stop_requested) {
+        for (s = 0; s < ce->slots[slot].count; ++s) {
             ce->slots[slot].rt[s]->tick(ce->slots[slot].rt[s]);
+            if (ce->stop_requested) break;
+        }
 
         next_tick = rx_tick_add_us(next_tick, ce->base_us);
-        rx_tick_sleep_until(next_tick);
+        if (!ce->stop_requested)
+            rx_tick_sleep_until(next_tick);
 
         slot = (slot + 1) % ce->nslots;
     }
+
+    if (ce->on_stop)
+        ce->on_stop(ce->on_stop_user);
+}
+
+void
+rx_cyclic_exec_stop(rx_cyclic_exec *ce)
+{
+    ce->stop_requested = 1;
+}
+
+void
+rx_cyclic_exec_on_stop(rx_cyclic_exec *ce,
+                       void (*callback)(void *user),
+                       void *user)
+{
+    ce->on_stop = callback;
+    ce->on_stop_user = user;
 }

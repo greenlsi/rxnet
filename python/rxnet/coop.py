@@ -21,7 +21,7 @@ Usage::
     ce = CoopExecutive()
     ce.add(pn_rt)    # PN nodes — base period from pn_rt.period_us
     ce.add(cli_rt)   # FSM cli — base period from cli_rt.period_us
-    ce.run()         # never returns
+    ce.run()         # returns when ce.stop() is requested
 
 Single runtime with multi-rate nodes::
 
@@ -36,6 +36,7 @@ Single runtime with multi-rate nodes::
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
 from .cyclic import sleep_until
@@ -55,8 +56,18 @@ class CoopExecutive:
       is driven independently.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_stop: Callable[[], None] | None = None) -> None:
         self._runtimes: list[Any] = []
+        self._stop_requested = False
+        self._on_stop = on_stop
+
+    def stop(self) -> None:
+        """Request the scheduler loop to stop at the next safe point."""
+        self._stop_requested = True
+
+    def on_stop(self, callback: Callable[[], None] | None) -> None:
+        """Register an optional callback run once before ``run`` returns."""
+        self._on_stop = callback
 
     def add(self, runtime: Any) -> None:
         """Register *runtime*.  Its base period must be > 0."""
@@ -70,7 +81,7 @@ class CoopExecutive:
         self._runtimes.append(runtime)
 
     def run(self) -> None:
-        """Enter the cooperative scheduler loop.  Never returns."""
+        """Enter the cooperative scheduler loop until :meth:`stop` is requested."""
         if not self._runtimes:
             raise RuntimeError("no runtimes registered")
 
@@ -79,17 +90,25 @@ class CoopExecutive:
         now = time.monotonic()
         deadlines = {id(rt): now for rt in self._runtimes}
 
-        while True:
-            now = time.monotonic()
+        self._stop_requested = False
+        try:
+            while not self._stop_requested:
+                now = time.monotonic()
 
-            # Run every runtime whose deadline has passed.
-            for rt in self._runtimes:
-                key = id(rt)
-                if now >= deadlines[key]:
-                    rt.tick()
-                    # Advance by one period (drift-tracking, not reset).
-                    deadlines[key] += rt.period_us * 1e-6
+                # Run every runtime whose deadline has passed.
+                for rt in self._runtimes:
+                    key = id(rt)
+                    if now >= deadlines[key]:
+                        rt.tick()
+                        # Advance by one period (drift-tracking, not reset).
+                        deadlines[key] += rt.period_us * 1e-6
+                        if self._stop_requested:
+                            break
 
-            # Sleep until the nearest upcoming deadline.
-            nearest = min(deadlines.values())
-            sleep_until(nearest)
+                # Sleep until the nearest upcoming deadline.
+                nearest = min(deadlines.values())
+                if not self._stop_requested:
+                    sleep_until(nearest)
+        finally:
+            if self._on_stop is not None:
+                self._on_stop()

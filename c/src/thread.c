@@ -54,6 +54,8 @@ node_loop(rx_thread_arg *a)
 
         next = rx_tick_add_us(next, period_us);
         base_tick += step;
+        if (te->stop_requested && (base_tick % rt->nslots) == 0)
+            return;
     }
 }
 
@@ -121,6 +123,7 @@ rx_thread_exec_run(rx_thread_exec *te)
     int last_n;
 
     te->t0 = rx_tick_now();
+    te->stop_requested = 0;
 
     /* Spawn all nodes except the last node of the last group. */
     for (g = 0; g < te->ngroups; g++) {
@@ -149,6 +152,25 @@ rx_thread_exec_run(rx_thread_exec *te)
         grp->args[last_n].te        = te;
         grp->args[last_n].group_idx = last_g;
         grp->args[last_n].node_idx  = last_n;
-        node_loop(&grp->args[last_n]); /* never returns */
+        node_loop(&grp->args[last_n]);
     }
+
+    te->stop_requested = 1;
+    if (te->on_stop)
+        te->on_stop(te->on_stop_user);
+}
+
+void
+rx_thread_exec_stop(rx_thread_exec *te)
+{
+    te->stop_requested = 1;
+}
+
+void
+rx_thread_exec_on_stop(rx_thread_exec *te,
+                       void (*callback)(void *user),
+                       void *user)
+{
+    te->on_stop = callback;
+    te->on_stop_user = user;
 }
