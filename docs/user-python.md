@@ -74,8 +74,8 @@ machine = Machine(
     state=IDLE,
     transitions=transitions,
     user=my_data,              # datos de usuario, pasados a guard/action
-    latch_inputs_cb=read_gpio, # llamada en fase 2 (latch por nodo)
-    dump_outputs_cb=write_gpio,# llamada en fase 6
+    latch_inputs_cb=read_gpio, # fase 1: snapshot hardware
+    dump_outputs_cb=write_gpio,# fase 5: escribir hardware
 )
 
 rt = Runtime()
@@ -337,405 +337,191 @@ def create_blink_pn(button_gpio, light_gpio, base_hz):
 
 ## 6. Modelos de ejecución concurrente
 
-Esta sección explica cómo rxnet se relaciona con los tres modelos clásicos de
-ejecución en sistemas embebidos y de tiempo real.
+rxnet incluye tres **executors** que gestionan el timing y el scheduling
+automáticamente. El período base de cada runtime se calcula como el MCD de los
+períodos de sus nodos (`add_machine(m, period_us=...)` /
+`add_node(n, period_us=...)`).
 
-### 6.1 Ejecutivo cíclico (Cyclic Executive)
+### 6.1 Ejecutivo cíclico — `CyclicExecutive`
 
-#### Qué es
-
-Un ejecutivo cíclico es el modelo más simple de concurrencia: un único hilo
-de ejecución que repite la misma secuencia de tareas indefinidamente, con un
-período fijo.
-
-Cada período (p. ej. 10 ms) ejecuta en orden fijo las tareas A (sensores),
-B (control) y C (actuadores), sin interrupciones entre ellas.
-
-#### rxnet ES un ejecutivo cíclico
-
-El bucle principal de cualquier ejemplo rxnet *es* un ejecutivo cíclico:
+Tabla de despacho estática con hiperperíodo. Un único hilo, orden de slots
+determinista. Adecuado para la mayoría de los casos.
 
 ```python
-# Esto es literalmente un ejecutivo cíclico
-PERIOD_S = 0.010   # 10 ms
+from rxnet.cyclic import CyclicExecutive
+from rxnet.fsm import Machine, Runtime
 
-next_tick = time.monotonic()
-while True:
-    rt.tick()                          # ← el "frame" del ejecutivo
+rt = Runtime()
+rt.add_machine(machine, period_us=10_000)   # 10 ms
 
-    next_tick += PERIOD_S
-    sleep_s = next_tick - time.monotonic()
-    if sleep_s > 0:
-        time.sleep(sleep_s)
+ce = CyclicExecutive()
+ce.add(rt)
+ce.run()   # retorna cuando ce.stop() es llamado
 ```
 
-Cada nodo registrado en el runtime es una "tarea" del ejecutivo. El orden de
-registro determina el orden de ejecución dentro del frame:
+Para terminar, llama a `ce.stop()` desde cualquier acción, guard, o hilo
+externo:
 
 ```python
-rt.add_machine(sensor_machine)    # tarea 1: se evalúa primero
-rt.add_machine(control_machine)   # tarea 2: ve el estado comprometido de tarea 1
-rt.add_machine(actuator_machine)  # tarea 3: ve el estado de las anteriores
+def check_exit(ctx, data):
+    if data.should_exit:
+        ce.stop()
 ```
 
-**Ventajas del ejecutivo cíclico**:
+El executor calcula automáticamente:
+- `base = MCD(períodos)` → período base
+- `hyper = MCM(períodos)` → hiperperíodo, N slots
 
-- Determinista: mismo orden en cada ciclo
-- Sin overhead de scheduler
-- Sin posibilidad de deadlock o starvation
-- Fácil de analizar temporalmente: si cada tarea tarda ≤ T, el ciclo tarda ≤ N×T
+**Cuándo usarlo**: períodos fijos, determinismo máximo, hilo único.
 
-**Limitaciones**:
+**Limitaciones**: todos los períodos deben ser múltiplos enteros del MCD.
 
-- Todas las tareas comparten el mismo período
-- Una tarea lenta retrasa todas las demás
-- No hay forma de responder a eventos urgentes a mitad de ciclo
+### 6.2 Multitarea cooperativa — `CoopExecutive`
 
-#### Ajuste fino: múltiples runtimes a distintas velocidades
+Scheduling dinámico por deadline. Un único hilo comprueba qué runtime tiene
+el deadline más próximo y lo ejecuta. No requiere que los períodos sean
+múltiplos entre sí.
 
 ```python
-tick_count = 0
-while True:
-    fast_runtime.tick()          # siempre: 10 ms
-    if tick_count % 10 == 0:
-        slow_runtime.tick()      # cada 100 ms
-    tick_count += 1
-    time.sleep(0.010)
+from rxnet.coop import CoopExecutive
+
+ce = CoopExecutive()
+ce.add(fast_rt)   # período 10 ms
+ce.add(slow_rt)   # período 15 ms
+ce.run()   # retorna cuando ce.stop() es llamado
 ```
 
-### 6.2 Multitarea cooperativa (Cooperative Multitasking)
+El executor avanza cada deadline desde su último disparo, evitando la
+acumulación de deriva de fase incluso cuando un runtime se retrasa.
 
-#### Qué es
+**Cuándo usarlo**: períodos irregulares, tareas que a veces se alargan un poco,
+sin overhead de threads.
 
-En la multitarea cooperativa, cada tarea cede el control voluntariamente cuando
-termina su trabajo. No hay interrupciones; el scheduler solo actúa en los puntos
-de *yield*. Python `asyncio` y MicroPython son ejemplos modernos.
+**Limitaciones**: una tarea muy lenta puede retrasar a todas las demás.
 
-| | Ejecutando | Esperando | Ejecutando | Esperando |
-|---|---|---|---|---|
-| Tarea A | bloque 1 | cede (yield) | bloque 2 | cede |
-| Tarea B | — | bloque 1 | — | bloque 2 |
+### 6.3 Threads paralelos — `ThreadExecutive`
 
-#### rxnet como multitarea cooperativa
-
-En rxnet, cada nodo *cede implícitamente* al terminar su `evaluate()`. El
-runtime es el scheduler; `tick()` es la ronda de scheduling.
-
-La diferencia conceptual respecto al ejecutivo cíclico es que una "tarea" puede
-necesitar **múltiples ticks** para completar su trabajo. El estado de la tarea
-(en qué punto del trabajo está) se modela explícitamente como estado de FSM o
-como distribución de tokens en la PN.
-
-**Ejemplo: tarea que procesa una cola de mensajes, uno por tick**
+Un thread por nodo. Tres barreras BSP por slot sincronizan las fases reactivas
+con verdadero paralelismo. El último nodo del último runtime corre en el hilo
+llamante (útil para nodo CLI/stdin).
 
 ```python
-IDLE         = 0
-PROCESANDO   = 1
-ERROR_HANDLER = 2
+from rxnet.thread import ThreadExecutive
 
-class WorkerData:
-    def __init__(self, queue):
-        self.queue = queue
-        self.current_msg = None
-
-def latch(ctx, d: WorkerData):
-    # Tomamos UN mensaje por tick (no vaciamos toda la cola)
-    d.current_msg = d.queue.pop(0) if d.queue else None
-
-def has_message(ctx, d): return d.current_msg is not None
-def is_processed(ctx, d): return True
-def has_error(ctx, d): return d.current_msg and d.current_msg.is_invalid()
-
-def process(ctx, d):
-    do_work(d.current_msg)
-
-machine = Machine(
-    name="worker",
-    state=IDLE,
-    transitions=[
-        Transition(IDLE,       PROCESANDO,   guard=has_message),
-        Transition(PROCESANDO, IDLE,          guard=is_processed, action=process),
-        Transition(PROCESANDO, ERROR_HANDLER, guard=has_error),
-    ],
-    user=WorkerData(my_queue),
-    latch_inputs_cb=latch,
-)
+te = ThreadExecutive()
+te.add(pn_rt)    # nodos PN → threads en background
+te.add(cli_rt)   # CLI → hilo principal
+te.run()   # retorna cuando te.stop() es llamado
 ```
 
-#### Comunicación entre tareas cooperativas
+**Importante**: nunca llames a `sys.exit()` directamente desde dentro de
+`ThreadExecutive` — los threads de background quedarían bloqueados en las
+barreras. Usa siempre `te.stop()` para terminar limpiamente.
 
-Las tareas se comunican a través de:
+**Cuándo usarlo**: varios nodos con trabajo de cómputo intensivo; sistemas con
+múltiples cores.
 
-1. **Lugares de PN (tokens como mensajes)**:
+**Limitaciones**: overhead de barreras; Python GIL limita el paralelismo real
+en código puro (pero no en I/O ni extensiones nativas).
+
+### 6.4 Resumen comparativo de executors
+
+| | `CyclicExecutive` | `CoopExecutive` | `ThreadExecutive` |
+|---|---|---|---|
+| **Threads** | 1 | 1 | 1 por nodo |
+| **Dispatch** | Tabla estática (hiperperíodo) | Deadline dinámico | Barreras BSP |
+| **Períodos** | Múltiplos del MCD | Cualquiera | Cualquiera |
+| **Paralelismo** | No | No | Sí (I/O y extensiones) |
+| **Overhead** | Mínimo | Mínimo | Barreras mutex |
+| **Casos típicos** | Mayoría de casos | Períodos irregulares | Múltiples cores |
+
+Todos los executors ofrecen `on_stop()` para ejecutar limpieza antes de que
+`run()` retorne:
 
 ```python
-# El productor añade un token cuando tiene datos
-net.places[P_BUFFER] += 1  # en latch_inputs_cb del productor
+ce.on_stop(lambda: pool.shutdown(wait=True))
 ```
 
-2. **Estado de FSM como señal de coordinación**:
+### 6.5 Multi-rate: nodos a distintas frecuencias
+
+Los executors gestionan el multi-rate automáticamente a partir de los períodos
+declarados al registrar los nodos:
 
 ```python
-def a_is_ready(ctx, d):
-    return task_a_machine.state == READY
+rt = Runtime()
+rt.add_machine(fast_machine, period_us=10_000)    # 10 ms
+rt.add_machine(slow_machine, period_us=100_000)   # 100 ms
+
+ce = CyclicExecutive()
+ce.add(rt)
+ce.run()
 ```
 
-3. **Context inputs (datos globales del tick)**:
+El executor calcula:
+- `base = MCD(10 ms, 100 ms) = 10 ms`
+- `hyper = MCM(10 ms, 100 ms) = 100 ms` → 10 slots
+- Slot 0: `fast_machine` + `slow_machine`; Slots 1–9: solo `fast_machine`
 
-```python
-ctx.inputs["alarm_active"] = sensor_data.alarm
-# Disponible en ctx.latched_inputs tras la fase 1 (latch global)
-```
-
-#### Diferencia clave con el ejecutivo cíclico
-
-| | Ejecutivo cíclico | Multitarea cooperativa |
-|---|---|---|
-| Unidad de trabajo | Todo en un tick | Puede abarcar N ticks |
-| Estado entre ticks | No necesario | Capturado en estados/tokens |
-| Comunicación | Secuencia fija | Señales explícitas |
-| Modelo rxnet | Nodos sin estado persistente | FSM / PN con estado |
-
-### 6.3 Threads con prioridades fijas y desalojo
-
-#### Qué es
-
-En un RTOS (FreeRTOS, Zephyr, ThreadX), las tareas tienen prioridades
-numéricas. El scheduler **desaloja** (preempt) una tarea de baja prioridad
-cuando una de alta prioridad pasa a estar lista para ejecutar.
-
-| | t1 | t2 | t3 | t4 |
-|---|---|---|---|---|
-| Alta prioridad | — | ejecuta | — | ejecuta |
-| Baja prioridad | ejecuta | *preemptada* | ejecuta | *preemptada* |
-
-#### rxnet con hilos del sistema operativo
-
-rxnet puede ejecutarse dentro de un hilo del SO. Cada hilo tiene su propio
-runtime y toca sus propias estructuras; no hace falta sincronización extra
-siempre que un solo hilo llame a `rt.tick()`.
-
-```python
-import threading
-import time
-
-def rxnet_thread(rt, period_s):
-    next_tick = time.monotonic()
-    while True:
-        rt.tick()
-        next_tick += period_s
-        sleep_s = next_tick - time.monotonic()
-        if sleep_s > 0:
-            time.sleep(sleep_s)
-
-fast_rt = Runtime()
-fast_rt.add_machine(control_machine)
-
-slow_rt = Runtime()
-slow_rt.add_machine(monitor_machine)
-
-threading.Thread(target=rxnet_thread, args=(fast_rt, 0.001), daemon=True).start()
-threading.Thread(target=rxnet_thread, args=(slow_rt, 0.100), daemon=True).start()
-```
-
-#### Modelar prioridades dentro de rxnet (sin hilos)
-
-Si *todas* las "tareas" son manejadas por rxnet, se puede modelar
-comportamiento de prioridades usando las propiedades del modelo:
-
-**a) Prioridad por orden de nodo**
-
-Los nodos registrados antes se evalúan primero. En PN con semántica
-greedy-sequential, las transiciones declaradas antes tienen prioridad:
-
-```python
-transitions = [
-    # Prioridad alta: se evalúa primero; si dispara, el token ya no está
-    Transition(consume=[Arc(P_CPU, 1)], produce=[Arc(P_TASK_HIGH, 1)],
-               guard=high_prio_ready),
-
-    # Prioridad baja: solo dispara si la alta no consumió el token
-    Transition(consume=[Arc(P_CPU, 1)], produce=[Arc(P_TASK_LOW, 1)],
-               guard=low_prio_ready),
-]
-```
-
-**b) Modelar desalojo con señales**
-
-```python
-P_CPU           = 0
-P_HIGH_READY    = 1
-P_HIGH_RUNNING  = 2
-P_LOW_READY     = 3
-P_LOW_RUNNING   = 4
-P_LOW_SUSPENDED = 5
-
-transitions = [
-    Transition(consume=[Arc(P_CPU,1), Arc(P_HIGH_READY,1)],
-               produce=[Arc(P_HIGH_RUNNING,1)]),
-    Transition(consume=[Arc(P_CPU,1), Arc(P_LOW_READY,1)],
-               produce=[Arc(P_LOW_RUNNING,1)]),
-    # Preempción: alta prioridad interrumpe a baja
-    Transition(consume=[Arc(P_LOW_RUNNING,1), Arc(P_HIGH_READY,1)],
-               produce=[Arc(P_LOW_SUSPENDED,1), Arc(P_HIGH_RUNNING,1)]),
-    # Reanudación: alta termina, baja retoma
-    Transition(consume=[Arc(P_HIGH_RUNNING,1), Arc(P_LOW_SUSPENDED,1)],
-               produce=[Arc(P_CPU,1), Arc(P_LOW_RUNNING,1)]),
-]
-```
-
-**Nota importante**: este modelo describe *cuándo* debe ejecutarse cada tarea,
-pero rxnet no ejecuta código en paralelo real. Para ejecución paralela
-verdadera se necesita combinar con hilos del SO. rxnet modela la **política**
-de scheduling; el SO implementa el **mecanismo**.
-
-#### Multi-rate: múltiples runtimes a distintas frecuencias
+Para runtimes completamente independientes a distintas frecuencias:
 
 ```python
 fast_rt = Runtime()
-fast_rt.add_machine(control_machine)   # 1 ms
+fast_rt.add_machine(control_machine, period_us=1_000)    # 1 ms
 
 slow_rt = Runtime()
-slow_rt.add_machine(monitor_machine)   # 100 ms
+slow_rt.add_machine(monitor_machine, period_us=100_000)  # 100 ms
 
-tick_count = 0
-next_tick = time.monotonic()
-
-while True:
-    fast_rt.tick()
-    if tick_count % 100 == 0:
-        slow_rt.tick()
-    tick_count += 1
-    next_tick += 0.001
-    time.sleep(max(0, next_tick - time.monotonic()))
+ce = CoopExecutive()   # o CyclicExecutive
+ce.add(fast_rt)
+ce.add(slow_rt)
+ce.run()
 ```
 
-Este patrón es equivalente a un ejecutivo cíclico con **trama mayor** (major
-frame) y **tramas menores** (minor frames), el diseño estándar en aviación
-(DO-178C) y automoción (AUTOSAR).
+### 6.6 Comunicación entre nodos
 
-### 6.4 Tick paralelo con ThreadPoolExecutor
+**Estado de FSM como señal**: un nodo puede leer `machine_a.state`
+directamente en sus guards — el estado fue comprometido en commit, antes del
+siguiente tick.
 
-Para sistemas con muchos nodos independientes (sin dependencias de datos entre
-ellos en el mismo tick), el runtime puede ejecutar cada fase en paralelo usando
-un `ThreadPoolExecutor` estándar de Python.
+**Tokens de PN como mensajes**: el productor escribe `net.places[P_BUFFER]` en
+su `latch_inputs_cb`; el consumidor dispara la transición que consume ese token.
+
+**Acciones diferidas**: cualquier callback puede encolar una acción para la
+fase deferred del tick actual:
 
 ```python
-from concurrent.futures import ThreadPoolExecutor
-from rxnet.runtime import Runtime
-
-with ThreadPoolExecutor(max_workers=4) as executor:
-    rt = Runtime(executor=executor)
-    rt.add_node(sensor_machine)
-    rt.add_node(control_machine)
-    rt.add_node(actuator_net)
-
-    while running:
-        rt.tick()   # cada fase se ejecuta en paralelo; barriers entre fases
-        time.sleep(0.010)
+ctx.enqueue_deferred_action(my_action_fn, user)
+ctx.enqueue_deferred_action(send_alarm, user, Priority.CRITICAL)
 ```
 
-**Garantías de orden preservadas**: aunque los nodos se ejecuten en paralelo
-*dentro* de una fase, las barreras entre fases son estrictas:
+### 6.7 Acciones diferidas asíncronas (WorkerPool)
 
-```
-todos los latch     → barrera → todos los evaluate
-todos los evaluate  → barrera → todos los commit
-todos los commit    → barrera → deferred → todos los dump
-```
-
-Un nodo en evaluate nunca puede empezar antes de que todos los latch hayan
-terminado. La hipótesis síncrona se mantiene.
-
-**Cuándo vale la pena**:
-
-- Muchos nodos con procesamiento costoso (señales analógicas, filtros)
-- Nodos genuinamente independientes: no leen el estado encomendado del otro
-  durante evaluate
-
-**Cuándo no usarlo**:
-
-- Nodos que se coordinan vía `machine.state` o `net.places[]` durante evaluate
-  (hay dependencia dentro del tick → orden secuencial necesario)
-- Pocos nodos ligeros: el overhead de scheduling supera el beneficio
-
-### 6.5 Acciones diferidas asíncronas (WorkerPool)
-
-Por defecto, la fase deferred ejecuta todas las acciones encoladas de forma
-síncrona antes de continuar con dump. Esto es correcto para acciones rápidas.
-
-Para acciones de larga duración (peticiones HTTP, acceso a disco, cálculos
-intensivos) que no deben bloquear el tick, rxnet ofrece un `WorkerPool`:
+Para acciones de larga duración (peticiones HTTP, acceso a disco) que no deben
+bloquear el tick:
 
 ```python
-from rxnet.worker_pool import Priority, WorkerPool
+from rxnet.worker_pool import WorkerPool
 from rxnet.runtime import Runtime
 
 pool = WorkerPool(num_workers=4)
 rt = Runtime(worker_pool=pool)
-rt.add_node(my_node)
 
-# tick() retorna inmediatamente; las acciones lentas corren en el pool
-rt.tick()
-
-pool.shutdown(wait=True)
+ce = CyclicExecutive()
+ce.add(rt)
+ce.on_stop(lambda: pool.shutdown(wait=True))
+ce.run()
 ```
 
 Con un `WorkerPool` activo, `tick()` **no bloquea** en la fase deferred:
-publica las acciones al pool y pasa directamente a dump. Los resultados de
-las acciones llegan a `ctx.inputs` en el siguiente latch.
-
-#### Prioridades en la cola de deferred
-
-Tanto en modo síncrono como asíncrono, las acciones encoladas pueden tener
-prioridad explícita:
-
-```python
-from rxnet.worker_pool import Priority
-
-ctx.enqueue_deferred_action(send_alarm,   user, Priority.CRITICAL)
-ctx.enqueue_deferred_action(log_event,    user, Priority.NORMAL)
-ctx.enqueue_deferred_action(update_stats, user, Priority.LOW)
-```
+publica las acciones al pool y pasa directamente a dump. Los resultados llegan
+a `ctx.inputs` en el siguiente latch.
 
 | Nivel | Valor | Uso típico |
 |---|---|---|
-| `CRITICAL` | 3 | Alarmas, paradas de emergencia |
-| `HIGH` | 2 | Control en tiempo real |
-| `NORMAL` | 1 | Lógica de aplicación (defecto) |
-| `LOW` | 0 | Telemetría, logging, estadísticas |
-
-En modo síncrono, las acciones se ordenan por prioridad antes de ejecutarse
-(FIFO dentro del mismo nivel). En modo asíncrono, el pool mantiene la misma
-semántica de prioridad entre workers.
-
-#### API del WorkerPool
-
-```python
-from rxnet.worker_pool import Priority, WorkerPool
-
-# Crear pool (usar como context manager)
-with WorkerPool(num_workers=4) as pool:
-    rt = Runtime(worker_pool=pool)
-    ...
-
-# O con ciclo de vida explícito
-pool = WorkerPool(num_workers=2)
-pool.submit(my_fn, ctx, user, Priority.HIGH)
-pool.shutdown(wait=True)   # drena la cola y espera a los workers
-```
-
-### 6.6 Resumen comparativo
-
-| Modelo | rxnet cómo lo implementa | Limitación |
-|---|---|---|
-| **Ejecutivo cíclico** | `rt.tick()` en bucle con `sleep` | Todas las tareas al mismo período |
-| **Multitarea cooperativa** | Estado en FSM/PN, tokens como mensajes | Sin preempción real |
-| **Prioridad por policy** | Orden de nodos + greedy-sequential PN | Solo modela la política |
-| **Hilos del SO** | Un hilo por runtime | Sincronización externa si comparten datos |
-| **Multi-rate** | Múltiples runtimes a distintas frecuencias | Major/minor frames manuales |
-| **Tick paralelo** | `Runtime(executor=ThreadPoolExecutor(...))` | Nodos deben ser independientes dentro del tick |
-| **Acciones asíncronas** | `Runtime(worker_pool=WorkerPool(...))` | Resultados llegan al siguiente tick |
+| `Priority.CRITICAL` | 3 | Alarmas, paradas de emergencia |
+| `Priority.HIGH` | 2 | Control en tiempo real |
+| `Priority.NORMAL` | 1 | Lógica de aplicación (defecto) |
+| `Priority.LOW` | 0 | Telemetría, logging, estadísticas |
 
 ---
 
@@ -855,12 +641,13 @@ Machine(
     state=INITIAL,
     transitions=[...],
     user=my_data,
-    latch_inputs_cb=read_inputs,    # fase 2: snapshot hardware
-    dump_outputs_cb=write_outputs,  # fase 6: escribir hardware
+    latch_inputs_cb=read_inputs,    # fase 1: snapshot hardware
+    dump_outputs_cb=write_outputs,  # fase 5: escribir hardware
 )
 
 rt = Runtime()
-rt.add_machine(machine)
+rt.add_machine(machine)                    # period_us=0: async (sin scheduling propio)
+rt.add_machine(machine, period_us=10_000)  # 10 ms: para uso con executors
 rt.tick()
 ```
 
@@ -891,7 +678,8 @@ Net(
 )
 
 rt = Runtime()
-rt.add_net(net)
+rt.add_net(net)                    # period_us=0: async (sin scheduling propio)
+rt.add_net(net, period_us=10_000)  # 10 ms: para uso con executors
 rt.tick()
 ```
 

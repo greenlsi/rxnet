@@ -107,6 +107,7 @@ class ThreadExecutive:
         main_loop_fn: Any = None
 
         total_groups = len(self._runtimes)
+        all_barriers: list[threading.Barrier] = []
 
         self._stop_requested.clear()
 
@@ -132,16 +133,16 @@ class ThreadExecutive:
                     dump_bs.append(None)
                 else:
                     # Capture ctx in closure via default arg.
-                    latch_bs.append(
-                        threading.Barrier(n, action=lambda c=ctx: c.latch_inputs())  # type: ignore[misc]
+                    lb = threading.Barrier(n, action=lambda c=ctx: c.latch_inputs())  # type: ignore[misc]
+                    cb = threading.Barrier(n)
+                    db = threading.Barrier(
+                        n,
+                        action=lambda c=ctx, wp=rt._worker_pool: c.dispatch_deferred(wp),  # type: ignore[misc]
                     )
-                    commit_bs.append(threading.Barrier(n))
-                    dump_bs.append(
-                        threading.Barrier(
-                            n,
-                            action=lambda c=ctx, wp=rt._worker_pool: c.dispatch_deferred(wp),  # type: ignore[misc]
-                        )
-                    )
+                    latch_bs.append(lb)
+                    commit_bs.append(cb)
+                    dump_bs.append(db)
+                    all_barriers.extend([lb, cb, db])
 
             total_nodes = len(entries)
 
@@ -177,16 +178,25 @@ class ThreadExecutive:
                         db = dump_bs[slot]
 
                         if lb is not None:
-                            lb.wait()
+                            try:
+                                lb.wait()
+                            except threading.BrokenBarrierError:
+                                return
                         node.latch_inputs(ctx)
                         node.evaluate(ctx)
 
                         if cb is not None:
-                            cb.wait()
+                            try:
+                                cb.wait()
+                            except threading.BrokenBarrierError:
+                                return
                         node.commit(ctx)
 
                         if db is not None:
-                            db.wait()
+                            try:
+                                db.wait()
+                            except threading.BrokenBarrierError:
+                                return
                         node.dump_outputs(ctx)
 
                         next_tick += period_s
@@ -207,7 +217,9 @@ class ThreadExecutive:
             main_loop_fn()
         finally:
             self._stop_requested.set()
+            for b in all_barriers:
+                b.abort()
             for t in threads:
-                t.join()
+                t.join(timeout=2.0)
             if self._on_stop is not None:
                 self._on_stop()

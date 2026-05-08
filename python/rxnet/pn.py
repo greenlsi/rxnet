@@ -139,6 +139,22 @@ class Runtime:
         self._core.build()
 
     @property
+    def _built(self) -> bool:
+        return self._core._built
+
+    @property
+    def _entries(self) -> list:
+        return self._core._entries
+
+    @property
+    def _slots(self) -> list:
+        return self._core._slots
+
+    @property
+    def _worker_pool(self):
+        return self._core._worker_pool
+
+    @property
     def period_us(self) -> int:
         return self._core.period_us
 

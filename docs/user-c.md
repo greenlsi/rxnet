@@ -587,8 +587,8 @@ rx_runtime_init(&rt, &ctx, 2);
 door_fsm_init(&door_machine);
 capacity_pn_init(&capacity_net);
 
-rx_runtime_add_node(&rt, &door_machine.node);
-rx_runtime_add_node(&rt, &capacity_net.node);
+rx_runtime_add_node(&rt, &door_machine.node, 0, 0);
+rx_runtime_add_node(&rt, &capacity_net.node, 0, 0);
 
 for (;;) {
     rx_tick(&rt);   /* FSM y PN avanzan juntos en el mismo tick */
@@ -617,7 +617,7 @@ rx_runtime rt;
 rx_runtime_init(&rt, &ctx, node_capacity);
 
 /* Registrar nodos */
-rx_runtime_add_node(&rt, &machine.node);   /* FSM o PN */
+rx_runtime_add_node(&rt, &machine.node, period_us, deadline_us);   /* FSM o PN */
 
 /* Ejecutar un ciclo */
 rx_tick(&rt);
@@ -681,7 +681,7 @@ void rx_fsm_machine_init(
 /* Runtime dedicado FSM (contiene contexto propio) */
 rx_fsm_runtime fsm_rt;
 rx_fsm_runtime_init(&fsm_rt, machine_capacity);
-rx_fsm_runtime_add_machine(&fsm_rt, &machine);
+rx_fsm_runtime_add_machine(&fsm_rt, &machine, period_us, deadline_us);
 rx_fsm_tick(&fsm_rt);
 ```
 
@@ -727,7 +727,7 @@ int rx_pn_net_init(
 /* Runtime dedicado PN */
 rx_pn_runtime pn_rt;
 rx_pn_runtime_init(&pn_rt, net_capacity);
-rx_pn_runtime_add_net(&pn_rt, &net);
+rx_pn_runtime_add_net(&pn_rt, &net, period_us, deadline_us);
 rx_pn_tick(&pn_rt);
 ```
 
