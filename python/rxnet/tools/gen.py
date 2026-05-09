@@ -1,5 +1,5 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 """rxnet-gen — FSM code and TLA+ spec generator.
 
@@ -99,7 +99,7 @@ except ImportError:  # pragma: no cover
 # ── data model ────────────────────────────────────────────────────────────────
 
 COPYRIGHT = "Copyright 2026 Jose M. Moya <jm.moya@upm.es>"
-SPDX = "MIT"
+SPDX = "GPL-3.0-or-later"
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # GENERATED — do not edit by hand.
 # Source: blink.yaml   (regenerate with: python -m rxnet.tools.gen blink.yaml)

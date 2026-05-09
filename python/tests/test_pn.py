@@ -1,5 +1,5 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 """Tests for rxnet.pn — equivalent to tests/test_pn.c."""
 from __future__ import annotations

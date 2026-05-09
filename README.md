@@ -80,3 +80,7 @@ Formal requirements and design documents:
 - [`docs/specs/c/requirements.md`](docs/specs/c/requirements.md)
 - [`docs/specs/c/design.md`](docs/specs/c/design.md)
 - [`docs/specs/python/requirements.md`](docs/specs/python/requirements.md)
+
+## License
+
+GPL-3.0-or-later. See [`LICENSE`](LICENSE).

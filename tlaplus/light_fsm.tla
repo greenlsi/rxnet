@@ -1,6 +1,6 @@
 ---- MODULE light_fsm ----
 \* Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-\* SPDX-License-Identifier: MIT
+\* SPDX-License-Identifier: GPL-3.0-or-later
 \*
 \* GENERATED — do not edit by hand.
 \* Source: light.yaml   (regenerate with: python -m rxnet.tools.gen light.yaml)

@@ -3,6 +3,7 @@ name = "rxnet"
 version = "1.0.0"
 description = "Reactive synchronous runtime — Python implementation"
 requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
 dependencies = [
     "types-pyyaml[dev]>=6.0.12.20260408",
 ]

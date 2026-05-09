@@ -1,5 +1,5 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 """rxnet.diagram — Graphviz DOT generation for FSM and Petri Net models.
 

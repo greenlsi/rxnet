@@ -1,5 +1,5 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 """PN 04-mix — BSP thread-per-node executor.
 
