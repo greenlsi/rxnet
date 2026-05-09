@@ -62,8 +62,8 @@ void rx_fsm_machine_init(
     const rx_fsm_transition *transitions,
     size_t transition_count,
     void *user,
-    rx_fsm_node_phase_fn latch_inputs,
-    rx_fsm_node_phase_fn dump_outputs
+    rx_fsm_node_phase_fn latch_inputs,   /* NULL -> noop */
+    rx_fsm_node_phase_fn dump_outputs    /* NULL -> noop */
 );
 rx_fsm_machine *rx_fsm_machine_create(
     const char *name,
@@ -71,8 +71,8 @@ rx_fsm_machine *rx_fsm_machine_create(
     const rx_fsm_transition *transitions,
     size_t transition_count,
     void *user,
-    rx_fsm_node_phase_fn latch_inputs,
-    rx_fsm_node_phase_fn dump_outputs
+    rx_fsm_node_phase_fn latch_inputs,   /* NULL -> noop */
+    rx_fsm_node_phase_fn dump_outputs    /* NULL -> noop */
 );
 void rx_fsm_machine_destroy(rx_fsm_machine *machine);
 

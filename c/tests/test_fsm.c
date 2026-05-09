@@ -89,20 +89,28 @@ static void fsm_runtime_destroy_null_is_safe(void) {
     rx_fsm_runtime_destroy(NULL);
 }
 
-static void fsm_add_machine_rejects_null_latch(void) {
+static void fsm_add_machine_accepts_null_latch_as_noop(void) {
     rx_fsm_runtime rt;
     rx_fsm_machine m;
-    rx_fsm_runtime_init(&rt, 1);
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 1));
     rx_fsm_machine_init(&m, "m", 0, NULL, 0, NULL, NULL, noop_dump);
-    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
+    ASSERT_EQ(0, rx_fsm_tick(&rt));
+
+    rx_fsm_runtime_free(&rt);
 }
 
-static void fsm_add_machine_rejects_null_dump(void) {
+static void fsm_add_machine_accepts_null_dump_as_noop(void) {
     rx_fsm_runtime rt;
     rx_fsm_machine m;
-    rx_fsm_runtime_init(&rt, 1);
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 1));
     rx_fsm_machine_init(&m, "m", 0, NULL, 0, NULL, noop_latch, NULL);
-    ASSERT_EQ(-1, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &m, 0, 0));
+    ASSERT_EQ(0, rx_fsm_tick(&rt));
+
+    rx_fsm_runtime_free(&rt);
 }
 
 static void fsm_machine_destroy_null_is_safe(void) {
@@ -312,8 +320,8 @@ int main(void) {
     RUN_TEST(fsm_runtime_init_succeeds);
     RUN_TEST(fsm_runtime_create_returns_non_null);
     RUN_TEST(fsm_runtime_destroy_null_is_safe);
-    RUN_TEST(fsm_add_machine_rejects_null_latch);
-    RUN_TEST(fsm_add_machine_rejects_null_dump);
+    RUN_TEST(fsm_add_machine_accepts_null_latch_as_noop);
+    RUN_TEST(fsm_add_machine_accepts_null_dump_as_noop);
     RUN_TEST(fsm_machine_destroy_null_is_safe);
 
     TEST_SUITE("fsm state transitions");

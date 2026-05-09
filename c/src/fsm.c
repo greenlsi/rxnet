@@ -6,10 +6,14 @@
 
 #include <stdlib.h>
 
+static void rx_fsm_noop(rx_fsm_context *ctx, void *user) {
+    (void)ctx;
+    (void)user;
+}
+
 static void rx_fsm_machine_latch_inputs(rx_node *node, rx_context *ctx) {
     rx_fsm_machine *machine = (rx_fsm_machine *)node;
-    if (machine->latch_inputs)
-        machine->latch_inputs(ctx, machine->user);
+    machine->latch_inputs(ctx, machine->user);
 }
 
 static void rx_fsm_machine_evaluate(rx_node *node, rx_context *ctx) {
@@ -49,8 +53,7 @@ static void rx_fsm_machine_commit(rx_node *node, rx_context *ctx) {
 
 static void rx_fsm_machine_dump_outputs(rx_node *node, rx_context *ctx) {
     rx_fsm_machine *machine = (rx_fsm_machine *)node;
-    if (machine->dump_outputs)
-        machine->dump_outputs(ctx, machine->user);
+    machine->dump_outputs(ctx, machine->user);
 }
 
 static const rx_node_vtable RX_FSM_MACHINE_VTABLE = {
@@ -147,8 +150,8 @@ void rx_fsm_machine_init(
     machine->transition_count = transition_count;
     machine->user = user;
     machine->proposed_action = NULL;
-    machine->latch_inputs = latch_inputs;
-    machine->dump_outputs = dump_outputs;
+    machine->latch_inputs = latch_inputs != NULL ? latch_inputs : rx_fsm_noop;
+    machine->dump_outputs = dump_outputs != NULL ? dump_outputs : rx_fsm_noop;
 }
 
 rx_fsm_machine *rx_fsm_machine_create(
