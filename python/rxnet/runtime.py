@@ -6,9 +6,10 @@ from __future__ import annotations
 import copy
 import math
 import threading
+import time
 from concurrent.futures import Executor
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from .worker_pool import Priority, WorkerPool
 
@@ -31,6 +32,88 @@ class DeferredAction:
 class _NodeEntry:
     node:      Any   # Node protocol
     period_us: int = 0  # 0 = async (active in every slot)
+    deadline_us: int = 0  # 0 = same as period_us
+    wcet_us: int = 0
+    resource_access_us: dict[int, int] | None = None
+
+
+SCHED_UNSCHEDULABLE = 0
+SCHED_SCHEDULABLE = 1
+SCHED_ERROR = -1
+SCHED_UNSUPPORTED = -2
+
+
+@dataclass(slots=True)
+class SchedResourceAccess:
+    resource_id: int
+    max_us: int
+
+
+@dataclass(slots=True)
+class SchedTaskResult:
+    runtime: Any
+    node_idx: int
+    period_us: int
+    deadline_us: int
+    wcet_us: int
+    interference_us: int = 0
+    blocking_us: int = 0
+    response_us: int = 0
+    schedulable: bool = True
+    resource_accesses: list[SchedResourceAccess] | None = None
+
+    def __post_init__(self) -> None:
+        if self.resource_accesses is None:
+            self.resource_accesses = []
+
+
+@dataclass(slots=True)
+class SchedReport:
+    schedulable: bool = True
+    unsupported: bool = False
+    tasks: list[SchedTaskResult] | None = None
+
+    def __post_init__(self) -> None:
+        if self.tasks is None:
+            self.tasks = []
+
+
+def effective_deadline(entry: _NodeEntry) -> int:
+    return entry.deadline_us if entry.deadline_us > 0 else entry.period_us
+
+
+def sched_status_name(status: int) -> str:
+    if status == SCHED_SCHEDULABLE:
+        return "schedulable"
+    if status == SCHED_UNSCHEDULABLE:
+        return "not schedulable"
+    if status == SCHED_UNSUPPORTED:
+        return "unsupported"
+    return "error"
+
+
+def print_sched_report(
+    name: str,
+    status: int,
+    report: SchedReport,
+    out: TextIO | None = None,
+) -> None:
+    stream = out if out is not None else __import__("sys").stdout
+    print(f"{name}: {sched_status_name(status)}", file=stream)
+    for task in report.tasks or []:
+        state = "OK" if task.schedulable else "MISS"
+        print(
+            f"  node={task.node_idx} T={task.period_us} D={task.deadline_us} "
+            f"C={task.wcet_us} I={task.interference_us} B={task.blocking_us} "
+            f"R={task.response_us} {state}",
+            file=stream,
+        )
+        if task.resource_accesses:
+            accesses = " ".join(
+                f"resource={access.resource_id} max={access.max_us}us"
+                for access in task.resource_accesses
+            )
+            print(f"    resources: {accesses}", file=stream)
 
 
 class Context:
@@ -61,13 +144,30 @@ class Context:
     silently corrupt ``latched_inputs`` for that tick.
     """
 
-    __slots__ = ("inputs", "latched_inputs", "_deferred_actions", "_deferred_lock")
+    __slots__ = (
+        "inputs",
+        "latched_inputs",
+        "activation_us",
+        "_deferred_actions",
+        "_deferred_lock",
+        "_active",
+        "_resource_locks",
+        "_resource_lock_guard",
+        "_resource_locking_enabled",
+        "_clock_ns",
+    )
 
     def __init__(self, inputs: Any = None) -> None:
         self.inputs = inputs
         self.latched_inputs = copy.copy(inputs)
+        self.activation_us = 0
         self._deferred_actions: list[DeferredAction] = []
         self._deferred_lock = threading.Lock()
+        self._active = threading.local()
+        self._resource_locks: dict[int, threading.Lock] = {}
+        self._resource_lock_guard = threading.Lock()
+        self._resource_locking_enabled = False
+        self._clock_ns = time.perf_counter_ns
 
     def latch_inputs(self) -> None:
         """Snapshot ``inputs`` into ``latched_inputs`` (shallow copy)."""
@@ -119,9 +219,60 @@ class Context:
             for action in actions:
                 worker_pool.submit(action.fn, self, action.user, action.priority)
 
+    def bind_critical_section_state(self, other: Context) -> None:
+        self._resource_locks = other._resource_locks
+        self._resource_lock_guard = other._resource_lock_guard
+        self._resource_locking_enabled = other._resource_locking_enabled
+
+    def set_critical_section_locking(self, enabled: bool) -> None:
+        self._resource_locking_enabled = bool(enabled)
+
+    def set_active_entry(self, entry: _NodeEntry | None) -> None:
+        self._active.entry = entry
+
+    def critical_section(self, resource_id: int) -> _CriticalSection:
+        return _CriticalSection(self, int(resource_id))
+
+
+class _CriticalSection:
+    def __init__(self, ctx: Context, resource_id: int) -> None:
+        self._ctx = ctx
+        self._resource_id = resource_id
+        self._lock: threading.Lock | None = None
+        self._started_ns = 0
+
+    def __enter__(self) -> _CriticalSection:
+        active_resource = getattr(self._ctx._active, "resource_id", None)
+        if active_resource is not None:
+            raise RuntimeError("nested critical sections are not supported")
+        if self._ctx._resource_locking_enabled:
+            with self._ctx._resource_lock_guard:
+                lock = self._ctx._resource_locks.setdefault(
+                    self._resource_id,
+                    threading.Lock(),
+                )
+            lock.acquire()
+            self._lock = lock
+        self._ctx._active.resource_id = self._resource_id
+        self._started_ns = self._ctx._clock_ns()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        elapsed_us = max(1, (self._ctx._clock_ns() - self._started_ns + 999) // 1000)
+        entry = getattr(self._ctx._active, "entry", None)
+        if entry is not None:
+            if entry.resource_access_us is None:
+                entry.resource_access_us = {}
+            previous = entry.resource_access_us.get(self._resource_id, 0)
+            if elapsed_us > previous:
+                entry.resource_access_us[self._resource_id] = elapsed_us
+        self._ctx._active.resource_id = None
+        if self._lock is not None:
+            self._lock.release()
+
 
 class Runtime:
-    """Reactive synchronous runtime with per-node multi-rate scheduling.
+    """Reactive synchronous runtime with per-node scheduling metadata.
 
     Parameters
     ----------
@@ -141,22 +292,9 @@ class Runtime:
         in ``ctx.inputs`` at the next latch.  When ``None`` (default),
         deferred actions run synchronously before dump.
 
-    Multi-rate scheduling
-    ---------------------
-    Each node is registered with an optional ``period_us`` (microseconds).
-    Call :meth:`build` (or let the first :meth:`tick` call it automatically)
-    to compute the hyperperiod dispatch table::
-
-        base_us  = GCD of all periodic node periods  → ``period_us``
-        hyper_us = LCM of all periodic node periods
-        nslots   = hyper_us / base_us
-
-    ``period_us == 0`` marks a node as *async*: it runs on every base tick
-    regardless of slot.
-
-    :meth:`tick` advances the internal slot counter automatically.  The
-    executors (``CyclicExecutive``, ``CoopExecutive``, ``ThreadExecutive``)
-    call ``tick()`` at the right intervals based on ``runtime.period_us``.
+    ``Runtime`` validates per-node periods/deadlines and computes the base
+    period.  It does not own an activation table; multi-rate executors build
+    the scheduling structure they need.
 
     Thread safety
     -------------
@@ -188,9 +326,9 @@ class Runtime:
         self._worker_pool = worker_pool
         self._built       = False
         self._period_us   = 0
-        self._nslots      = 1
+        self._nslots      = 0
         self._current_slot = 0
-        self._slots:      list[list[Any]] = []  # slots[s] = list of Node
+        self._slots:      list[list[Any]] = []  # deprecated compatibility only
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -201,68 +339,60 @@ class Runtime:
         """All registered nodes (in registration order)."""
         return [e.node for e in self._entries]
 
-    def add_node(self, node: Any, period_us: int = 0) -> None:
+    def add_node(self, node: Any, period_us: int = 0, deadline_us: int = 0) -> None:
         """Register *node* with an optional period.
 
         Parameters
         ----------
         period_us:
-            Period in microseconds.  ``0`` (default) = async: the node
-            runs on every base tick regardless of slot.  A positive value
-            makes the node periodic; the hyperperiod table is updated on
-            the next :meth:`build` call.
+            Period in microseconds.  ``0`` (default) = async.
+        deadline_us:
+            Relative deadline in microseconds. ``0`` means same as period.
         """
-        self._entries.append(_NodeEntry(node=node, period_us=period_us))
-        self._built = False  # invalidate slot table
+        self._entries.append(_NodeEntry(node=node, period_us=period_us, deadline_us=deadline_us))
+        self._built = False
 
     def build(self) -> None:
-        """Compute the hyperperiod dispatch table.
+        """Validate scheduling metadata and compute the runtime base period.
 
         Called automatically by the first :meth:`tick` if not called
         explicitly.  Must be called after the last :meth:`add_node`.
 
-        Sets:
-        * ``period_us`` — GCD of all periodic node periods (0 if all async).
-        * ``nslots``    — number of hyperperiod slots (1 if all async).
+        Sets ``period_us`` to the GCD of all periodic node periods, or ``0``
+        if all nodes are async.  No hyperperiod activation table is built.
         """
         entries = self._entries
         if not entries:
             self._period_us    = 0
-            self._nslots       = 1
+            self._nslots       = 0
             self._current_slot = 0
-            self._slots        = [[]]
+            self._slots        = []
             self._built        = True
             return
 
         periods = [e.period_us for e in entries if e.period_us > 0]
+        for e in entries:
+            if e.period_us < 0:
+                raise ValueError("period_us must be >= 0")
+            if e.deadline_us < 0:
+                raise ValueError("deadline_us must be >= 0")
+            if e.period_us > 0 and e.deadline_us > e.period_us:
+                raise ValueError("deadline_us must be <= period_us")
 
         if not periods:
-            # All async: one slot, base period undefined.
             self._period_us    = 0
-            self._nslots       = 1
+            self._nslots       = 0
             self._current_slot = 0
-            self._slots        = [[e.node for e in entries]]
+            self._slots        = []
             self._built        = True
             return
 
         base  = math.gcd(*periods)
-        hyper = math.lcm(*periods)
-        nslots = hyper // base
-
-        slots: list[list[Any]] = []
-        for s in range(nslots):
-            active: list[Any] = []
-            for e in entries:
-                if e.period_us == 0:
-                    active.append(e.node)           # async: every slot
-                elif (s * base) % e.period_us == 0:
-                    active.append(e.node)           # periodic: scheduled slot
-            slots.append(active)
 
         self._period_us    = base
-        self._nslots       = nslots
+        self._nslots       = 0
         self._current_slot = 0
-        self._slots        = slots
+        self._slots        = []
         self._built        = True
 
     @property
@@ -278,53 +408,77 @@ class Runtime:
 
     @property
     def nslots(self) -> int:
-        """Number of hyperperiod slots.  ``1`` if all nodes are async."""
+        """Deprecated runtime-owned slot count.  Always ``0`` after build."""
         if not self._built:
             self.build()
         return self._nslots
 
     def tick(self) -> None:
-        """Execute one tick for the current hyperperiod slot.
-
-        Runs all nodes active in ``current_slot``, then advances the slot
-        counter.  The first call triggers :meth:`build` if not yet built.
+        """Execute one manual tick for all registered nodes.
 
         **Not thread-safe.** Only one thread may call ``tick()`` at a time.
         """
         if not self._built:
             self.build()
 
-        nodes = self._slots[self._current_slot]
-        if self._executor is not None:
-            self._parallel_tick(nodes)
-        else:
-            self._sequential_tick(nodes)
+        self.tick_nodes_at(range(len(self._entries)), activation_us=0)
 
-        self._current_slot = (self._current_slot + 1) % self._nslots
+    def tick_nodes(self, node_indices: list[int] | range | tuple[int, ...]) -> None:
+        self.tick_nodes_at(node_indices, activation_us=0)
+
+    def tick_nodes_at(
+        self,
+        node_indices: list[int] | range | tuple[int, ...],
+        activation_us: int,
+    ) -> None:
+        if not self._built:
+            self.build()
+
+        entries = [self._entries[i] for i in node_indices]
+        self.context.activation_us = activation_us
+        nodes = [e.node for e in entries]
+        if self._executor is not None:
+            elapsed = self._parallel_tick(entries)
+        else:
+            elapsed = self._sequential_tick(entries)
+        for entry, elapsed_us in zip(entries, elapsed):
+            entry.wcet_us = max(entry.wcet_us, elapsed_us)
 
     # ------------------------------------------------------------------ #
     # Internal                                                             #
     # ------------------------------------------------------------------ #
 
-    def _sequential_tick(self, nodes: list[Any]) -> None:
+    def _sequential_tick(self, entries: list[_NodeEntry]) -> list[int]:
         ctx = self.context
+        started: dict[int, int] = {}
+        nodes = [e.node for e in entries]
 
+        ctx.set_critical_section_locking(False)
         ctx.latch_inputs()
-        for node in nodes:
+        for entry, node in zip(entries, nodes):
+            ctx.set_active_entry(entry)
+            started[id(node)] = time.perf_counter_ns()
             node.latch_inputs(ctx)
 
-        for node in nodes:
+        for entry, node in zip(entries, nodes):
+            ctx.set_active_entry(entry)
             node.evaluate(ctx)
 
-        for node in nodes:
+        for entry, node in zip(entries, nodes):
+            ctx.set_active_entry(entry)
             node.commit(ctx)
+        ctx.set_active_entry(None)
 
         ctx.dispatch_deferred(self._worker_pool)
 
+        elapsed: list[int] = []
         for node in nodes:
             node.dump_outputs(ctx)
+            elapsed_us = max(1, (time.perf_counter_ns() - started[id(node)] + 999) // 1000)
+            elapsed.append(elapsed_us)
+        return elapsed
 
-    def _parallel_tick(self, nodes: list[Any]) -> None:
+    def _parallel_tick(self, entries: list[_NodeEntry]) -> list[int]:
         """Parallel tick with an implicit barrier between each phase.
 
         executor.map() submits all tasks to the thread pool and blocks
@@ -333,12 +487,26 @@ class Runtime:
         """
         ex  = self._executor
         ctx = self.context
+        nodes = [e.node for e in entries]
+        started = {id(n): time.perf_counter_ns() for n in nodes}
+        entries_by_id = {id(e.node): e for e in entries}
 
+        def run_phase(node: Any, phase: str) -> None:
+            ctx.set_active_entry(entries_by_id[id(node)])
+            getattr(node, phase)(ctx)
+            ctx.set_active_entry(None)
+
+        ctx.set_critical_section_locking(True)
         ctx.latch_inputs()
-        list(ex.map(lambda n: n.latch_inputs(ctx), nodes))  # type: ignore[union-attr]
-        list(ex.map(lambda n: n.evaluate(ctx), nodes))       # type: ignore[union-attr]
-        list(ex.map(lambda n: n.commit(ctx), nodes))         # type: ignore[union-attr]
+        list(ex.map(lambda n: run_phase(n, "latch_inputs"), nodes))  # type: ignore[union-attr]
+        list(ex.map(lambda n: run_phase(n, "evaluate"), nodes))      # type: ignore[union-attr]
+        list(ex.map(lambda n: run_phase(n, "commit"), nodes))        # type: ignore[union-attr]
 
         ctx.dispatch_deferred(self._worker_pool)
 
-        list(ex.map(lambda n: n.dump_outputs(ctx), nodes))  # type: ignore[union-attr]
+        list(ex.map(lambda n: run_phase(n, "dump_outputs"), nodes))  # type: ignore[union-attr]
+        finished = time.perf_counter_ns()
+        return [max(1, (finished - started[id(n)] + 999) // 1000) for n in nodes]
+
+    def node_entries(self) -> list[_NodeEntry]:
+        return self._entries

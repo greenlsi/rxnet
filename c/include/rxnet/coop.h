@@ -40,6 +40,7 @@ extern "C" {
 typedef struct {
     rx_runtime *rt;
     rx_tick_t   next_tick[RXNET_MAX_RUNTIME_NODES];
+    long        next_activation_us[RXNET_MAX_RUNTIME_NODES];
 } rx_coop_task;
 
 typedef struct {

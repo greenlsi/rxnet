@@ -27,7 +27,8 @@ graph TB
     Core --> Latch["Phase 1: Latch Inputs"]
     Core --> Eval["Phase 2: Evaluate Nodes"]
     Core --> Commit["Phase 3: Commit Nodes"]
-    Core --> Deferred["Phase 4: Run Deferred Actions"]
+    Core --> Deferred["Dispatch Deferred Actions"]
+    Core --> Dump["Phase 4: Dump Outputs"]
 
     Eval --> FSMNodes["FSM Machines"]
     Eval --> PNNets["PN Nets"]
@@ -37,6 +38,7 @@ graph TB
     FSMNodes --> Actions["Deferred Action Queue"]
     PNNets --> Actions
     Actions --> Deferred
+    Deferred --> Dump
 
     FSMSurface --> PyAPI["Python API: rxnet.fsm"]
     PNSurface --> PyPNAPI["Python API: rxnet.pn"]
@@ -62,6 +64,8 @@ The system follows a layered runtime architecture:
 - Maintain a list of executable nodes
 - Execute deterministic tick phases
 - Coordinate context latch and deferred actions
+- Store the logical activation instant (`Context.activation_us`)
+- Validate per-node period/deadline metadata and compute the base period
 - Provide minimal lifecycle surface (`add_node`, `tick`)
 
 **Key Interfaces:**
@@ -71,9 +75,15 @@ class Node(Protocol):
     def commit(self, ctx: Context) -> None: ...
 
 class Runtime:
-    def add_node(self, node: Node) -> None: ...
+    def add_node(self, node: Node, period_us: int = 0, deadline_us: int = 0) -> None: ...
     def tick(self) -> None: ...
+    def tick_nodes_at(self, node_indices: Sequence[int], activation_us: int) -> None: ...
 ```
+
+The core runtime does not materialise a hyperperiod activation table. Multi-rate
+executors own scheduling state: `CyclicExecutive` builds a hyperperiod table,
+`CoopExecutive` tracks each node's next activation, and `ThreadExecutive`
+creates BSP activation groups dynamically.
 
 ### Context
 
@@ -91,6 +101,7 @@ class Runtime:
 class Context:
     inputs: Any
     latched_inputs: Any
+    activation_us: int
     def latch_inputs(self) -> None: ...
     def enqueue_deferred_action(self, fn: Any, user: Any) -> None: ...
     def run_deferred_actions(self) -> None: ...

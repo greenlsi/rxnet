@@ -191,6 +191,13 @@ sched_report_add(rx_sched_report *report, const rx_ce_activation *a,
     r->blocking_us = blocking_us;
     r->response_us = response_us;
     r->schedulable = schedulable;
+    r->resource_access_count = entry->resource_access_count;
+    {
+        int i;
+        for (i = 0; i < entry->resource_access_count; ++i) {
+            r->resource_accesses[i] = entry->resource_accesses[i];
+        }
+    }
     if (!schedulable) report->schedulable = 0;
     return 0;
 }
@@ -259,6 +266,7 @@ void
 rx_cyclic_exec_run(rx_cyclic_exec *ce)
 {
     rx_tick_t next_tick;
+    long activation_us;
     int slot, s, t;
 
     if (ce->nslots == 0 && rx_cyclic_exec_build(ce) != 0)
@@ -270,6 +278,7 @@ rx_cyclic_exec_run(rx_cyclic_exec *ce)
     }
 
     next_tick = rx_tick_now();
+    activation_us = 0;
     slot = 0;
     ce->stop_requested = 0;
 
@@ -286,12 +295,13 @@ rx_cyclic_exec_run(rx_cyclic_exec *ce)
                 }
             }
             if (count > 0) {
-                rx_runtime_tick_nodes(rt, active, count);
+                rx_runtime_tick_nodes_at(rt, active, count, activation_us);
             }
             if (ce->stop_requested) break;
         }
 
         next_tick = rx_tick_add_us(next_tick, ce->base_us);
+        activation_us += ce->base_us;
         if (!ce->stop_requested)
             rx_tick_sleep_until(next_tick);
 

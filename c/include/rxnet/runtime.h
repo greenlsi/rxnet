@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 #include "rxnet/config.h"
+#include "rxnet/port.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,9 @@ typedef struct rx_deferred_action_entry rx_deferred_action_entry;
 typedef struct rx_worker_pool rx_worker_pool;
 typedef struct rx_sched_task_result rx_sched_task_result;
 typedef struct rx_sched_report rx_sched_report;
+typedef struct rx_sched_resource_access rx_sched_resource_access;
+typedef struct rx_shared_resource_entry rx_shared_resource_entry;
+typedef struct rx_shared_resource_table rx_shared_resource_table;
 
 typedef void (*rx_deferred_action_fn)(rx_context *ctx, void *user);
 typedef void (*rx_node_phase_fn)(rx_node *node, rx_context *ctx);
@@ -34,6 +38,11 @@ typedef void (*rx_node_phase_fn)(rx_node *node, rx_context *ctx);
 
 #define RXNET_SCHED_MAX_TASKS (RXNET_CE_MAX_TASKS * RXNET_MAX_RUNTIME_NODES)
 
+struct rx_sched_resource_access {
+    int  resource_id;
+    long max_us;
+};
+
 struct rx_sched_task_result {
     rx_runtime   *rt;
     unsigned char node_idx;
@@ -44,6 +53,8 @@ struct rx_sched_task_result {
     long          blocking_us;
     long          response_us;
     int           schedulable;
+    int           resource_access_count;
+    rx_sched_resource_access resource_accesses[RXNET_MAX_SHARED_RESOURCES];
 };
 
 struct rx_sched_report {
@@ -105,6 +116,12 @@ struct rx_context {
     size_t deferred_count;
     size_t deferred_capacity;
     rx_worker_pool *worker_pool; /* NULL = synchronous deferred (default) */
+    long activation_us;          /* logical activation instant, relative to executor start */
+    rx_node_entry *active_entry;
+    rx_shared_resource_table *shared_resources;
+    int critical_locking_enabled;
+    int critical_resource_id;
+    rx_tick_t critical_started_at;
 };
 
 struct rx_node_vtable {
@@ -144,6 +161,19 @@ struct rx_node_entry {
     long     period_us;
     long     deadline_us;
     long     wcet_us;
+    int      resource_access_count;
+    rx_sched_resource_access resource_accesses[RXNET_MAX_SHARED_RESOURCES];
+};
+
+struct rx_shared_resource_entry {
+    int in_use;
+    int resource_id;
+    rx_mutex_t lock;
+};
+
+struct rx_shared_resource_table {
+    rx_mutex_t table_lock;
+    rx_shared_resource_entry entries[RXNET_MAX_SHARED_RESOURCES];
 };
 
 /* ------------------------------------------------------------------ */
@@ -186,6 +216,7 @@ struct rx_runtime {
     rx_runtime_slot slots_storage[RXNET_MAX_RUNTIME_SLOTS];
     int nslots;
     int current_slot;
+    rx_shared_resource_table shared_resources;
 };
 
 /*
@@ -202,6 +233,14 @@ int rx_context_init(rx_context *ctx);
 rx_context *rx_context_create(void);
 void rx_context_free(rx_context *ctx);
 void rx_context_destroy(rx_context *ctx);
+
+/* Logical activation instant for the current tick, in microseconds. */
+long rx_context_activation_us(const rx_context *ctx);
+void rx_context_set_activation_us(rx_context *ctx, long activation_us);
+
+/* Mark a critical section over a shared resource and record max duration. */
+int rx_context_critical_begin(rx_context *ctx, int resource_id);
+int rx_context_critical_end(rx_context *ctx);
 
 /* Enqueue a deferred action with NORMAL priority (backward-compatible). */
 int rx_context_enqueue_deferred_action(rx_context *ctx, rx_deferred_action_fn fn, void *user);
@@ -265,6 +304,10 @@ int rx_runtime_build(rx_runtime *rt);
 int rx_runtime_tick_nodes(rx_runtime *rt,
                           const unsigned char *node_idx,
                           int count);
+int rx_runtime_tick_nodes_at(rx_runtime *rt,
+                             const unsigned char *node_idx,
+                             int count,
+                             long activation_us);
 
 void rx_node_set_latch_inputs_callback(rx_node *node, rx_node_phase_fn cb);
 void rx_node_set_dump_outputs_callback(rx_node *node, rx_node_phase_fn cb);

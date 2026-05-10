@@ -1,81 +1,122 @@
 # Copyright 2026 Jose M. Moya <jm.moya@upm.es>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""rxnet.thread — BSP thread-per-node executor with phase barriers.
+"""rxnet.thread — thread-per-node executor with BSP activation groups."""
 
-One thread per node.  Three ``threading.Barrier`` objects per hyperperiod
-slot enforce the reactive-synchronous guarantee:
-
-- **latch_b[s]**: all active nodes arrive → action: global latch
-  (``ctx.latch_inputs()``) → all released → each node runs
-  ``latch_inputs`` + ``evaluate`` in parallel.
-- **commit_b[s]**: all active nodes arrive → no action → all released →
-  each node runs ``commit`` in parallel.
-- **dump_b[s]**: all active nodes arrive → action: dispatch deferred
-  actions → all released → each node runs ``dump_outputs`` in parallel.
-
-The three barriers map cleanly to the five reactive phases:
-
-  latch_b  →  latch_inputs (global + per-node) + evaluate
-  commit_b  →  commit
-  dump_b   →  (deferred dispatch) + dump_outputs
-
-Multiple runtimes can be registered; each forms an independent barrier
-group.  Nodes in different runtimes run fully independently (no shared
-barriers or contexts across runtime groups).
-
-The last node of the last runtime runs in the calling (main) thread,
-preserving stdin/CLI access.
-
-Usage::
-
-    from rxnet.thread import ThreadExecutive
-
-    te = ThreadExecutive()
-    te.add(rt)          # one runtime: all nodes get threads except the last
-    te.run()            # returns when te.stop() is requested
-
-Multiple runtimes::
-
-    te.add(pn_rt)       # PN nodes → background threads
-    te.add(cli_rt)      # cli → main thread (last runtime, last node)
-    te.run()
-"""
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, TextIO
 
 from .cyclic import sleep_until
+from .runtime import (
+    Context,
+    SCHED_ERROR,
+    SCHED_SCHEDULABLE,
+    SCHED_UNSCHEDULABLE,
+    SchedReport,
+    SchedResourceAccess,
+    SchedTaskResult,
+    effective_deadline,
+)
+
+
+@dataclass(slots=True)
+class _ActivationGroup:
+    activation_us: int
+    count: int
+    latched_inputs: Any
+    eval_b: threading.Barrier
+    commit_b: threading.Barrier
+    done: int = 0
+
+
+class _RuntimeGroup:
+    def __init__(self, runtime: Any) -> None:
+        self.runtime = runtime
+        self.node_contexts = [Context(runtime.context.inputs) for _ in runtime._entries]
+        for ctx in self.node_contexts:
+            ctx.bind_critical_section_state(runtime.context)
+            ctx.set_critical_section_locking(True)
+        self.active: dict[int, _ActivationGroup] = {}
+        self.lock = threading.Lock()
+
+    def active_count_at(self, activation_us: int) -> int:
+        count = 0
+        for entry in self.runtime._entries:
+            if entry.period_us > 0 and activation_us % entry.period_us == 0:
+                count += 1
+        return count
+
+    def get_activation_group(self, activation_us: int) -> _ActivationGroup:
+        with self.lock:
+            found = self.active.get(activation_us)
+            if found is not None:
+                return found
+            count = self.active_count_at(activation_us)
+            if count <= 0:
+                raise RuntimeError("empty activation group")
+            group = _ActivationGroup(
+                activation_us=activation_us,
+                count=count,
+                latched_inputs=copy.copy(self.runtime.context.inputs),
+                eval_b=threading.Barrier(count),
+                commit_b=threading.Barrier(count),
+            )
+            self.active[activation_us] = group
+            return group
+
+    def finish_activation_group(self, group: _ActivationGroup) -> None:
+        with self.lock:
+            group.done += 1
+            if group.done == group.count:
+                self.active.pop(group.activation_us, None)
+
+
+def _max_thread_blocking(tasks: list[tuple[Any, int]]) -> int:
+    accesses = [
+        (rt._entries[idx].resource_access_us or {})
+        for rt, idx in tasks
+    ]
+
+    def best(task_pos: int, used_resources: set[int]) -> int:
+        if task_pos >= len(accesses):
+            return 0
+        maximum = best(task_pos + 1, used_resources)
+        for resource_id, elapsed_us in accesses[task_pos].items():
+            if resource_id in used_resources:
+                continue
+            maximum = max(
+                maximum,
+                elapsed_us + best(task_pos + 1, used_resources | {resource_id}),
+            )
+        return maximum
+
+    return best(0, set())
 
 
 class ThreadExecutive:
     """BSP thread-per-node executor.
 
-    Each node in each registered runtime runs in its own ``threading.Thread``
-    (except the very last node of the very last runtime, which runs in the
-    calling thread).  Phase barriers ensure the reactive-synchronous
-    invariant: all latches and evaluations complete before any commit, and
-    all commits complete before deferred dispatch and dump.
-
-    .. note::
-        Python's GIL means threads cannot run Python bytecode truly in
-        parallel.  For I/O-bound latch/dump phases (reading GPIO, writing
-        hardware) the GIL is released and true parallelism is achieved.
-        For purely compute-bound node logic, the sequential or parallel
-        (``executor``) tick variants of :class:`~rxnet.runtime.Runtime`
-        may be more suitable.
+    Each periodic node runs in its own thread except the last node of the last
+    runtime, which runs in the calling thread.  Each logical activation instant
+    creates an activation group with two barriers: after evaluate and after
+    commit plus deferred dispatch.  Async nodes are rejected.
     """
 
     def __init__(self, on_stop: Callable[[], None] | None = None) -> None:
         self._runtimes: list[Any] = []
+        self._groups: list[_RuntimeGroup] = []
         self._stop_requested = threading.Event()
         self._on_stop = on_stop
+        self._sched_check_enabled = False
 
     def stop(self) -> None:
-        """Request all node loops to stop at a hyperperiod boundary."""
+        """Request all node loops to stop after their current tick."""
         self._stop_requested.set()
 
     def on_stop(self, callback: Callable[[], None] | None) -> None:
@@ -83,7 +124,7 @@ class ThreadExecutive:
         self._on_stop = callback
 
     def add(self, runtime: Any) -> None:
-        """Register *runtime*.  Its base period must be > 0."""
+        """Register *runtime*.  Async nodes are not supported."""
         if not runtime._built:
             runtime.build()
         if runtime.period_us == 0:
@@ -91,135 +132,193 @@ class ThreadExecutive:
                 "runtime has no periodic nodes; "
                 "register at least one node with period_us > 0"
             )
+        for entry in runtime._entries:
+            if entry.period_us <= 0:
+                raise ValueError("async nodes are not supported by ThreadExecutive")
         self._runtimes.append(runtime)
+        self._groups.append(_RuntimeGroup(runtime))
+
+    def enable_sched_check(self, enabled: bool = True) -> None:
+        self._sched_check_enabled = bool(enabled)
+
+    def check_schedulability(
+        self,
+        report: SchedReport | None = None,
+        log: TextIO | None = None,
+    ) -> int:
+        tasks = self._ordered_tasks()
+        rep = report if report is not None else SchedReport()
+        rep.schedulable = True
+        rep.unsupported = False
+        rep.tasks.clear()
+
+        for rt, idx in tasks:
+            entry = rt._entries[idx]
+            if entry.period_us <= 0:
+                rep.unsupported = True
+                if log is not None:
+                    print("thread: async node cannot be analysed", file=log)
+                return SCHED_ERROR
+            if entry.wcet_us <= 0:
+                if log is not None:
+                    print(f"thread: missing WCET for node {idx}", file=log)
+                return SCHED_ERROR
+
+        all_schedulable = True
+        for i, (rt, idx) in enumerate(tasks):
+            entry = rt._entries[idx]
+            ci = entry.wcet_us
+            di = effective_deadline(entry)
+            lower = tasks[i + 1:]
+            blocking = _max_thread_blocking(lower)
+            ri_prev = ci + blocking
+            converged = False
+            while True:
+                interference = 0
+                for hrt, hidx in tasks[:i]:
+                    higher = hrt._entries[hidx]
+                    jobs = (ri_prev + higher.period_us - 1) // higher.period_us
+                    interference += jobs * higher.wcet_us
+                ri = ci + blocking + interference
+                if ri == ri_prev:
+                    converged = True
+                    break
+                if ri > di:
+                    break
+                ri_prev = ri
+
+            ok = converged and ri <= di
+            all_schedulable = all_schedulable and ok
+            rep.tasks.append(
+                SchedTaskResult(
+                    runtime=rt,
+                    node_idx=idx,
+                    period_us=entry.period_us,
+                    deadline_us=di,
+                    wcet_us=ci,
+                    interference_us=ri - ci - blocking,
+                    blocking_us=blocking,
+                    response_us=ri,
+                    schedulable=ok,
+                    resource_accesses=[
+                        SchedResourceAccess(resource_id=res, max_us=max_us)
+                        for res, max_us in sorted((entry.resource_access_us or {}).items())
+                    ],
+                )
+            )
+            if log is not None:
+                print(
+                    f"node={idx} C={ci} T={entry.period_us} D={di} "
+                    f"B={blocking} I={ri - ci - blocking} R={ri} {'OK' if ok else 'MISS'}",
+                    file=log,
+                )
+
+        rep.schedulable = all_schedulable
+        return SCHED_SCHEDULABLE if all_schedulable else SCHED_UNSCHEDULABLE
+
+    def _ordered_tasks(self) -> list[tuple[Any, int]]:
+        tasks: list[tuple[Any, int]] = []
+        for rt in self._runtimes:
+            for idx, entry in enumerate(rt._entries):
+                if entry.period_us > 0:
+                    tasks.append((rt, idx))
+        tasks.sort(key=lambda t: (effective_deadline(t[0]._entries[t[1]]), id(t[0]), t[1]))
+        return tasks
 
     def run(self) -> None:
-        """Spawn node threads and enter the main-thread node loop.
-
-        The last node of the last registered runtime runs in the calling
-        thread.  Returns when :meth:`stop` is requested.
-        """
-        if not self._runtimes:
+        """Spawn node threads and enter the main-thread node loop."""
+        if not self._groups:
             raise RuntimeError("no runtimes registered")
+
+        if self._sched_check_enabled:
+            status = self.check_schedulability()
+            if status == SCHED_UNSCHEDULABLE:
+                return
 
         t0 = time.monotonic()
         threads: list[threading.Thread] = []
-        main_loop_fn: Any = None
-
-        total_groups = len(self._runtimes)
-        all_barriers: list[threading.Barrier] = []
+        main_loop_fn: Callable[[], None] | None = None
+        last_group_idx = len(self._groups) - 1
 
         self._stop_requested.clear()
 
-        for group_idx, rt in enumerate(self._runtimes):
-            ctx     = rt.context
-            entries = rt._entries
-            nslots  = rt.nslots
-            base_us = rt.period_us
-
-            # Build per-slot barriers.
-            # latch_b[s]: action = global latch (ctx.latch_inputs)
-            # commit_b[s]: no action (just synchronises commit phase)
-            # dump_b[s]: action = dispatch deferred actions
-            latch_bs: list[threading.Barrier | None]  = []
-            commit_bs: list[threading.Barrier | None] = []
-            dump_bs: list[threading.Barrier | None]   = []
-
-            for s in range(nslots):
-                n = len(rt._slots[s])
-                if n == 0:
-                    latch_bs.append(None)
-                    commit_bs.append(None)
-                    dump_bs.append(None)
-                else:
-                    # Capture ctx in closure via default arg.
-                    lb = threading.Barrier(n, action=lambda c=ctx: c.latch_inputs())  # type: ignore[misc]
-                    cb = threading.Barrier(n)
-                    db = threading.Barrier(
-                        n,
-                        action=lambda c=ctx, wp=rt._worker_pool: c.dispatch_deferred(wp),  # type: ignore[misc]
-                    )
-                    latch_bs.append(lb)
-                    commit_bs.append(cb)
-                    dump_bs.append(db)
-                    all_barriers.extend([lb, cb, db])
-
-            total_nodes = len(entries)
-
-            for node_idx, entry in enumerate(entries):
-                node     = entry.node
-                period_s = (entry.period_us if entry.period_us > 0 else base_us) * 1e-6
-                step     = (entry.period_us // base_us) if entry.period_us > 0 else 1
-
-                is_last = (
-                    group_idx == total_groups - 1
-                    and node_idx == total_nodes - 1
-                )
+        for group_idx, group in enumerate(self._groups):
+            runtime = group.runtime
+            last_node_idx = len(runtime._entries) - 1
+            for node_idx, entry in enumerate(runtime._entries):
+                is_last = group_idx == last_group_idx and node_idx == last_node_idx
 
                 def make_loop(
-                    node=node,
-                    ctx=ctx,
-                    period_s=period_s,
-                    step=step,
-                    latch_bs=latch_bs,
-                    commit_bs=commit_bs,
-                    dump_bs=dump_bs,
-                    nslots=nslots,
-                    stop_requested=self._stop_requested,
-                ) -> None:
-                    next_tick = t0
-                    base_tick = 0
-                    while True:
-                        sleep_until(next_tick)
-                        slot = base_tick % nslots
+                    group: _RuntimeGroup = group,
+                    node_idx: int = node_idx,
+                    stop_requested: threading.Event = self._stop_requested,
+                    period_us: int = entry.period_us,
+                ) -> Callable[[], None]:
+                    def loop() -> None:
+                        runtime = group.runtime
+                        entry = runtime._entries[node_idx]
+                        node = entry.node
+                        ctx = group.node_contexts[node_idx]
+                        activation_us = 0
+                        while True:
+                            target = t0 + activation_us * 1e-6
+                            sleep_until(target)
+                            activation_group = group.get_activation_group(activation_us)
+                            ctx.inputs = runtime.context.inputs
+                            ctx.latched_inputs = activation_group.latched_inputs
+                            ctx.activation_us = activation_group.activation_us
 
-                        lb = latch_bs[slot]
-                        cb = commit_bs[slot]
-                        db = dump_bs[slot]
-
-                        if lb is not None:
+                            started = time.perf_counter_ns()
+                            ctx.set_active_entry(entry)
+                            node.latch_inputs(ctx)
+                            node.evaluate(ctx)
                             try:
-                                lb.wait()
+                                activation_group.eval_b.wait()
                             except threading.BrokenBarrierError:
                                 return
-                        node.latch_inputs(ctx)
-                        node.evaluate(ctx)
 
-                        if cb is not None:
+                            node.commit(ctx)
+                            ctx.dispatch_deferred(runtime._worker_pool)
                             try:
-                                cb.wait()
+                                activation_group.commit_b.wait()
                             except threading.BrokenBarrierError:
                                 return
-                        node.commit(ctx)
 
-                        if db is not None:
-                            try:
-                                db.wait()
-                            except threading.BrokenBarrierError:
+                            node.dump_outputs(ctx)
+                            ctx.set_active_entry(None)
+                            elapsed_us = max(
+                                1,
+                                (time.perf_counter_ns() - started + 999) // 1000,
+                            )
+                            entry.wcet_us = max(entry.wcet_us, elapsed_us)
+                            group.finish_activation_group(activation_group)
+
+                            activation_us += period_us
+                            if stop_requested.is_set():
                                 return
-                        node.dump_outputs(ctx)
 
-                        next_tick += period_s
-                        base_tick += step
-                        if stop_requested.is_set() and base_tick % nslots == 0:
-                            return
+                    return loop
 
+                loop_fn = make_loop()
                 if is_last:
-                    main_loop_fn = make_loop
+                    main_loop_fn = loop_fn
                 else:
-                    t = threading.Thread(target=make_loop, daemon=True)
-                    threads.append(t)
-                    t.start()
+                    thread = threading.Thread(target=loop_fn, daemon=True)
+                    threads.append(thread)
+                    thread.start()
 
-        # The last node runs in the calling (main) thread.
         assert main_loop_fn is not None
         try:
             main_loop_fn()
         finally:
             self._stop_requested.set()
-            for b in all_barriers:
-                b.abort()
-            for t in threads:
-                t.join(timeout=2.0)
+            for group in self._groups:
+                with group.lock:
+                    active = list(group.active.values())
+                for activation_group in active:
+                    activation_group.eval_b.abort()
+                    activation_group.commit_b.abort()
+            for thread in threads:
+                thread.join(timeout=2.0)
             if self._on_stop is not None:
                 self._on_stop()

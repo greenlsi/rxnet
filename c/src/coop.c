@@ -187,6 +187,13 @@ rx_coop_exec_check_schedulability(rx_coop_exec *ce,
             tr->response_us = ri;
             tr->interference_us = ri - ci - bi;
             tr->schedulable = converged && ri <= di;
+            tr->resource_access_count = ei->resource_access_count;
+            {
+                int r;
+                for (r = 0; r < ei->resource_access_count; ++r) {
+                    tr->resource_accesses[r] = ei->resource_accesses[r];
+                }
+            }
         }
         if (!(converged && ri <= di)) {
             all_schedulable = 0;
@@ -224,6 +231,7 @@ rx_coop_exec_run(rx_coop_exec *ce)
         rx_runtime *rt = ce->tasks[i].rt;
         for (n = 0; n < rt->node_count; ++n) {
             ce->tasks[i].next_tick[n] = now;
+            ce->tasks[i].next_activation_us[n] = 0;
         }
     }
     ce->stop_requested = 0;
@@ -236,15 +244,23 @@ rx_coop_exec_run(rx_coop_exec *ce)
             rx_runtime *rt = ce->tasks[i].rt;
             unsigned char active[RXNET_MAX_RUNTIME_NODES];
             int count = 0;
+            long activation_us = 0;
+            int have_activation = 0;
 
             for (n = 0; n < rt->node_count; ++n) {
                 long p = rt->nodes[n].period_us;
                 if (p > 0 && rx_tick_compare(now, ce->tasks[i].next_tick[n]) >= 0) {
+                    long node_activation_us = ce->tasks[i].next_activation_us[n];
                     active[count++] = (unsigned char)n;
+                    if (!have_activation || node_activation_us < activation_us) {
+                        activation_us = node_activation_us;
+                        have_activation = 1;
+                    }
                     /* Advance by one period to track drift rather than resetting
                      * from now, preventing accumulated phase slippage. */
                     ce->tasks[i].next_tick[n] =
                         rx_tick_add_us(ce->tasks[i].next_tick[n], p);
+                    ce->tasks[i].next_activation_us[n] += p;
                 }
             }
 
@@ -256,7 +272,7 @@ rx_coop_exec_run(rx_coop_exec *ce)
                         active[count++] = (unsigned char)n;
                     }
                 }
-                rx_runtime_tick_nodes(rt, active, count);
+                rx_runtime_tick_nodes_at(rt, active, count, activation_us);
             }
             if (ce->stop_requested) {
                 break;

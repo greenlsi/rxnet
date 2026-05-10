@@ -101,6 +101,7 @@ int  rx_context_init(rx_context *ctx);
 rx_context *rx_context_create(void);
 void rx_context_free(rx_context *ctx);
 void rx_context_destroy(rx_context *ctx);
+long rx_context_activation_us(const rx_context *ctx);
 int  rx_context_enqueue_deferred_action(rx_context *ctx, rx_deferred_action_fn fn, void *user);
 void rx_context_run_deferred_actions(rx_context *ctx);
 ```

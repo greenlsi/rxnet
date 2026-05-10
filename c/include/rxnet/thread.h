@@ -66,6 +66,7 @@ typedef struct {
 typedef struct {
     int          in_use;
     long         activation_us;
+    rx_tick_t    activation_tick;
     int          count;
     int          done;
     rx_barrier_t eval_b;

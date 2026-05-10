@@ -342,6 +342,10 @@ rxnet incluye tres **executors** que gestionan el timing y el scheduling
 automáticamente. El período base de cada runtime se calcula como el MCD de los
 períodos de sus nodos (`add_machine(m, period_us=...)` /
 `add_node(n, period_us=...)`).
+El runtime no materializa una tabla de activaciones; cada executor construye o
+mantiene la estructura que necesita. Antes de `latch`, el executor escribe el
+instante lógico del grupo en `ctx.activation_us`, común para todos los nodos
+activados en ese instante.
 
 ### 6.1 Ejecutivo cíclico — `CyclicExecutive`
 
@@ -371,17 +375,18 @@ def check_exit(ctx, data):
 
 El executor calcula automáticamente:
 - `base = MCD(períodos)` → período base
-- `hyper = MCM(períodos)` → hiperperíodo, N slots
+- `hyper = MCM(períodos)` → hiperperíodo, N slots en su propia tabla
 
 **Cuándo usarlo**: períodos fijos, determinismo máximo, hilo único.
 
-**Limitaciones**: todos los períodos deben ser múltiplos enteros del MCD.
+**Limitaciones**: si los períodos no son armónicos, el hiperperíodo puede crecer
+mucho; en ese caso suele convenir `CoopExecutive` o `ThreadExecutive`.
 
 ### 6.2 Multitarea cooperativa — `CoopExecutive`
 
-Scheduling dinámico por deadline. Un único hilo comprueba qué runtime tiene
-el deadline más próximo y lo ejecuta. No requiere que los períodos sean
-múltiplos entre sí.
+Scheduling dinámico por deadline. Un único hilo ejecuta los nodos vencidos por
+orden de deadline y duerme hasta la siguiente activación. No requiere que los
+períodos sean múltiplos entre sí.
 
 ```python
 from rxnet.coop import CoopExecutive
@@ -392,8 +397,8 @@ ce.add(slow_rt)   # período 15 ms
 ce.run()   # retorna cuando ce.stop() es llamado
 ```
 
-El executor avanza cada deadline desde su último disparo, evitando la
-acumulación de deriva de fase incluso cuando un runtime se retrasa.
+El executor avanza cada activación desde su último disparo, evitando la
+acumulación de deriva de fase incluso cuando un nodo se retrasa.
 
 **Cuándo usarlo**: períodos irregulares, tareas que a veces se alargan un poco,
 sin overhead de threads.
@@ -402,9 +407,10 @@ sin overhead de threads.
 
 ### 6.3 Threads paralelos — `ThreadExecutive`
 
-Un thread por nodo. Tres barreras BSP por slot sincronizan las fases reactivas
-con verdadero paralelismo. El último nodo del último runtime corre en el hilo
-llamante (útil para nodo CLI/stdin).
+Un thread por nodo periódico. Cada grupo de activación usa dos barreras BSP:
+una tras `evaluate` y otra tras `commit` más el despacho de acciones diferidas.
+El último nodo del último runtime corre en el hilo llamante (útil para nodo
+CLI/stdin). Los nodos async no están soportados en `ThreadExecutive`.
 
 ```python
 from rxnet.thread import ThreadExecutive
@@ -425,13 +431,20 @@ múltiples cores.
 **Limitaciones**: overhead de barreras; Python GIL limita el paralelismo real
 en código puro (pero no en I/O ni extensiones nativas).
 
+El análisis automático de planificabilidad se activa con
+`enable_sched_check(True)` y puede reportarse con `check_schedulability()`.
+`CyclicExecutive` analiza su hiperperíodo con WCETs medidos, `CoopExecutive`
+usa análisis iterativo de tiempo de respuesta con bloqueo cooperativo, y
+`ThreadExecutive` marca el análisis como no soportado porque Python no ofrece
+FIFO de prioridades fijas para threads.
+
 ### 6.4 Resumen comparativo de executors
 
 | | `CyclicExecutive` | `CoopExecutive` | `ThreadExecutive` |
 |---|---|---|---|
-| **Threads** | 1 | 1 | 1 por nodo |
-| **Dispatch** | Tabla estática (hiperperíodo) | Deadline dinámico | Barreras BSP |
-| **Períodos** | Múltiplos del MCD | Cualquiera | Cualquiera |
+| **Threads** | 1 | 1 | 1 por nodo periódico |
+| **Dispatch** | Tabla estática (hiperperíodo del executive) | Próxima activación + deadline | Grupos de activación + barreras BSP |
+| **Períodos** | Mejor con períodos armónicos o hiperperíodo corto | Cualquiera | Cualquiera |
 | **Paralelismo** | No | No | Sí (I/O y extensiones) |
 | **Overhead** | Mínimo | Mínimo | Barreras mutex |
 | **Casos típicos** | Mayoría de casos | Períodos irregulares | Múltiples cores |
@@ -458,7 +471,7 @@ ce.add(rt)
 ce.run()
 ```
 
-El executor calcula:
+Con `CyclicExecutive`, el executor calcula:
 - `base = MCD(10 ms, 100 ms) = 10 ms`
 - `hyper = MCM(10 ms, 100 ms) = 100 ms` → 10 slots
 - Slot 0: `fast_machine` + `slow_machine`; Slots 1–9: solo `fast_machine`
@@ -596,13 +609,15 @@ rt = Runtime(
     worker_pool=WorkerPool(4),      # acciones deferred asíncronas
 )
 
-rt.add_node(node)                   # registrar nodo (FSM o PN)
-rt.tick()                           # ejecutar un ciclo completo
+rt.add_node(node, period_us=10_000, deadline_us=10_000)
+rt.tick()                           # tick manual: ejecuta todos los nodos
+rt.tick_nodes_at([0, 1], activation_us=20_000)  # uso interno de executors
 rt.context                          # acceder al contexto
 
 # Contexto
 ctx.inputs                          # entradas en vivo (mutables desde fuera)
 ctx.latched_inputs                  # snapshot de este tick (solo lectura)
+ctx.activation_us                   # instante lógico del grupo activo
 
 # Encolar acción deferred — prioridad por defecto NORMAL
 ctx.enqueue_deferred_action(fn, user)
@@ -648,7 +663,7 @@ Machine(
 
 rt = Runtime()
 rt.add_machine(machine)                    # period_us=0: async (sin scheduling propio)
-rt.add_machine(machine, period_us=10_000)  # 10 ms: para uso con executors
+rt.add_machine(machine, period_us=10_000, deadline_us=10_000)
 rt.tick()
 ```
 
@@ -680,7 +695,7 @@ Net(
 
 rt = Runtime()
 rt.add_net(net)                    # period_us=0: async (sin scheduling propio)
-rt.add_net(net, period_us=10_000)  # 10 ms: para uso con executors
+rt.add_net(net, period_us=10_000, deadline_us=10_000)
 rt.tick()
 ```
 

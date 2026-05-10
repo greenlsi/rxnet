@@ -36,6 +36,7 @@ CLI commands:
 - `a` or `press a`: trigger shared button A (affects lights A and B)
 - `b` or `press b`: trigger button B (affects light C)
 - `status`: print machine/output status
+- `sched`: report schedulability analysis using measured WCET samples
 - `quit`: exit
 - `tick`: no-op (ticks are already periodic)
 

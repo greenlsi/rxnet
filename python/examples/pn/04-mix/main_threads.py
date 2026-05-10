@@ -5,9 +5,7 @@
 
 Same scenario as ``main.py`` but driven by ``ThreadExecutive``.
 
-``ThreadExecutive`` gives each node its own ``threading.Thread``.  Three
-``threading.Barrier`` objects per hyperperiod slot enforce the
-reactive-synchronous guarantee:
+``ThreadExecutive`` gives each node its own ``threading.Thread``.  Two barriers per active logical activation group enforce the reactive-synchronous guarantee:
 
 - **latch_b[s]**: all active nodes arrive → global latch
   (``ctx.latch_inputs()``) → each node runs ``latch_inputs`` +
@@ -18,11 +16,10 @@ reactive-synchronous guarantee:
   each node runs ``dump_outputs`` in parallel.
 
 All four nodes (light_a 10 ms, blink_b 10 ms, auto_c 20 ms, cli 10 ms)
-are in a single runtime.  The hyperperiod table (base=10 ms, 2 slots)
-determines which nodes participate in each slot barrier:
+are in a single runtime.  Activation groups are created for logical instants and determine which nodes participate:
 
-  slot 0 (t = 0, 20, 40, …): light_a + blink_b + auto_c + cli  barrier(4)
-  slot 1 (t = 10, 30, 50, …): light_a + blink_b + cli           barrier(3)
+  slot 0 (t = 0, 20, 40, …): light_a + blink_b + auto_c + cli  group(4)
+  slot 1 (t = 10, 30, 50, …): light_a + blink_b + cli           group(3)
 
 The **cli node is added last** and runs in the main thread (stdin access).
 All other nodes get background daemon threads.
@@ -56,6 +53,7 @@ from rxnet.runtime import Context
 
 import app_driver
 from cli import Cli
+from sched_report import make_sched_command
 from light_pn import P_ON as LIGHT_P_ON, create_light_pn
 from auto_pn import P_ON as AUTO_P_ON, create_auto_pn, get_timeout_ms, set_timeout_ms
 from blink_pn import P_X1, P_X2, create_blink_pn, get_base_hz, get_output_enabled, set_base_hz
@@ -191,6 +189,7 @@ def main() -> None:
     auto_c  = create_auto_pn(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
 
     cli = Cli()
+    te = ThreadExecutive()
     nets = (light_a, blink_b, auto_c)
 
     cli.register("a",        cmd_button_a)
@@ -200,6 +199,7 @@ def main() -> None:
     cli.register("status",   cmd_status,  nets)
     cli.register("freq",     cmd_freq,    nets)
     cli.register("timeout",  cmd_timeout, nets)
+    cli.register("sched",   make_sched_command("thread", te))
     cli.register("help",     lambda l, u: cli.print_help())
     cli.register("quit",     cmd_quit)
     cli.register("exit",     cmd_quit)
@@ -219,7 +219,7 @@ def main() -> None:
     cmd_status("status", nets)
     cli.print_prompt()
 
-    te = ThreadExecutive()
+    te.enable_sched_check(True)
     te.add(rt)
     te.run()  # never returns — cli_node runs in this (main) thread
 

@@ -11,13 +11,11 @@ per-machine::
     auto_c   20 ms
     cli_node 10 ms
 
-The runtime builds the hyperperiod table:
+The cyclic executive builds the hyperperiod table:
     base  = GCD(10, 10, 20, 10) = 10 ms
     hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
 
-``CyclicExecutive`` drives the single runtime, calling ``rt.tick()``
-every 10 ms.  The runtime advances its internal slot counter and runs
-only the nodes scheduled for that slot.
+``CyclicExecutive`` drives explicit node activation groups every 10 ms.  The executive owns the hyperperiod table; the runtime only executes the active group it receives.
 
 Usage::
 
@@ -42,6 +40,7 @@ from rxnet.runtime import Context
 
 import app_driver
 from cli import Cli
+from sched_report import make_sched_command
 from light_fsm import LIGHT_STATE_ON, create_light_fsm
 from auto_fsm import AUTO_STATE_ON, create_auto_fsm, get_auto_off_timeout_ms, set_auto_off_timeout_ms
 from blink_fsm import (
@@ -196,6 +195,7 @@ def main() -> None:
     auto_c  = create_auto_fsm(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
 
     cli = Cli()
+    ce = CyclicExecutive()
     machines = (light_a, blink_b, auto_c)
 
     cli.register("a",        cmd_button_a)
@@ -205,6 +205,7 @@ def main() -> None:
     cli.register("status",   cmd_status,  machines)
     cli.register("freq",     cmd_freq,    machines)
     cli.register("timeout",  cmd_timeout, machines)
+    cli.register("sched",   make_sched_command("cyclic", ce))
     cli.register("help",     lambda l, u: cli.print_help())
     cli.register("quit",     cmd_quit)
     cli.register("exit",     cmd_quit)
@@ -225,7 +226,7 @@ def main() -> None:
     cmd_status("status", machines)
     cli.print_prompt()
 
-    ce = CyclicExecutive()
+    ce.enable_sched_check(True)
     ce.add(rt)
     ce.run()  # never returns
 

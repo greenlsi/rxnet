@@ -33,6 +33,7 @@
 #include "light_pn.h"
 #include "auto_pn.h"
 #include "blink_pn.h"
+#include "sched_report.h"
 
 #define LIGHT_A_GPIO         2
 #define LIGHT_B_GPIO         4
@@ -174,6 +175,7 @@ int main(void) {
     app_data app = {&light_a, &blink_b, &auto_c};
     cli_machine_data cli_data;
     rx_coop_exec ce;
+    rx_example_coop_sched_command sched_cmd = {"coop", &ce};
 
     if (rx_pn_runtime_init(&pn_rt,  3) != 0 ||
         rx_fsm_runtime_init(&cli_rt, 1) != 0) {
@@ -204,6 +206,7 @@ int main(void) {
         cli_fsm_register_command(&cli_data, "freq",     cmd_freq,     &app) != 0 ||
         cli_fsm_register_command(&cli_data, "timeout",  cmd_timeout,  &app) != 0 ||
         cli_fsm_register_command(&cli_data, "trace",    cmd_trace,    NULL) != 0 ||
+        cli_fsm_register_command(&cli_data, "sched",    rx_example_cmd_coop_sched, &sched_cmd) != 0 ||
         cli_fsm_register_command(&cli_data, "help",     cmd_help,     NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "quit",     cmd_quit,     NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "exit",     cmd_quit,     NULL) != 0) {
@@ -252,6 +255,7 @@ int main(void) {
     rx_coop_exec_init(&ce);
     rx_coop_exec_add(&ce, &pn_rt.runtime);   /* light_a + blink_b + auto_c */
     rx_coop_exec_add(&ce, &cli_rt.runtime);  /* cli */
+    rx_coop_exec_enable_sched_check(&ce, 1);
     rx_coop_exec_run(&ce); /* never returns */
 
     return 0;

@@ -71,6 +71,10 @@ their runtime, but the node advances only when its own guards fire.
 
 Three executors are provided.  They read per-node scheduling parameters from the
 runtime and handle timing internally.
+Before a node group starts `latch`, the executor stores the logical activation
+instant in the group's `rx_context`; callbacks can read it with
+`rx_context_activation_us(ctx)`.  All nodes in the same activation group see the
+same value, even in `rx_thread_exec`.
 
 ### `rx_cyclic_exec` — cyclic executive
 
@@ -123,6 +127,8 @@ rx_thread_exec_run(&te); /* returns after rx_thread_exec_stop(&te) */
 
 Each executor also has an `rx_*_exec_on_stop()` hook for application/model
 shutdown logic that must run once before `rx_*_exec_run()` returns.
+Interactive examples enable the executor schedulability check and register a
+`sched` command that logs the analysis using the WCET samples measured so far.
 
 Multiple runtimes can be registered; each forms an independent barrier group:
 

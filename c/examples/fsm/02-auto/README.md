@@ -28,4 +28,5 @@ CLI commands:
 - `b` or `press b`: trigger button B (affects light C)
 - `status`: print machine/output status and current auto-off timeouts
 - `timeout <a|b|c> <ms>`: change auto-off timeout for one light
+- `sched`: report schedulability analysis using measured WCET samples
 - `quit`: exit

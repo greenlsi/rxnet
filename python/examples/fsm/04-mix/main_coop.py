@@ -41,6 +41,7 @@ from rxnet.runtime import Context
 
 import app_driver
 from cli import Cli
+from sched_report import make_sched_command
 from light_fsm import LIGHT_STATE_ON, create_light_fsm
 from auto_fsm import AUTO_STATE_ON, create_auto_fsm, get_auto_off_timeout_ms, set_auto_off_timeout_ms
 from blink_fsm import (
@@ -181,6 +182,7 @@ def main() -> None:
     auto_c  = create_auto_fsm(BUTTON_B_GPIO, LIGHT_C_GPIO, DEFAULT_TIMEOUT_C_MS)
 
     cli = Cli()
+    ce = CoopExecutive()
     machines = (light_a, blink_b, auto_c)
 
     cli.register("a",        cmd_button_a)
@@ -190,6 +192,7 @@ def main() -> None:
     cli.register("status",   cmd_status,  machines)
     cli.register("freq",     cmd_freq,    machines)
     cli.register("timeout",  cmd_timeout, machines)
+    cli.register("sched",   make_sched_command("coop", ce))
     cli.register("help",     lambda l, u: cli.print_help())
     cli.register("quit",     cmd_quit)
     cli.register("exit",     cmd_quit)
@@ -208,7 +211,7 @@ def main() -> None:
     cmd_status("status", machines)
     cli.print_prompt()
 
-    ce = CoopExecutive()
+    ce.enable_sched_check(True)
     ce.add(rt)
     ce.run()  # never returns
 

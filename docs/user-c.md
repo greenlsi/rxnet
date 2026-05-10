@@ -414,6 +414,10 @@ ejecución en sistemas embebidos y de tiempo real.
 rxnet incluye tres **executors** que gestionan el timing y el scheduling
 automáticamente. El período de cada runtime se lee de `rt->period_us`, que el
 propio runtime calcula como el MCD de los períodos de sus nodos.
+Antes de ejecutar `latch`, el executor escribe en el `rx_context` el instante
+lógico de activación del grupo; las callbacks pueden consultarlo con
+`rx_context_activation_us(ctx)`. Todos los nodos de un mismo grupo de activación
+ven el mismo valor, también en `rx_thread_exec`.
 
 ### 6.1 Ejecutivo cíclico — `rx_cyclic_exec`
 
@@ -437,13 +441,14 @@ El executor calcula automáticamente:
 
 **Cuándo usarlo**: periodos fijos conocidos en compilación, determinismo máximo.
 
-**Limitaciones**: todos los períodos deben ser múltiplos enteros del MCD.
+**Limitaciones**: si los períodos no son armónicos, el hiperperíodo puede crecer
+mucho; en ese caso suele convenir `rx_coop_exec` o `rx_thread_exec`.
 
 ### 6.2 Multitarea cooperativa — `rx_coop_exec`
 
-Scheduling dinámico por deadline. Un único hilo comprueba qué runtime tiene el
-deadline más próximo y lo ejecuta. No requiere que los períodos sean múltiplos
-entre sí.
+Scheduling dinámico por deadline. Un único hilo comprueba qué nodos están
+vencidos en cada runtime, ordena los nodos activos por deadline efectivo y
+ejecuta sólo ese grupo. No materializa una tabla de hiperperíodo.
 
 ```c
 #include "rxnet/coop.h"
@@ -455,8 +460,8 @@ rx_coop_exec_add(&ce, &rt_b.runtime);   /* período 15 ms */
 rx_coop_exec_run(&ce);  /* retorna tras rx_coop_exec_stop(&ce) */
 ```
 
-El executor avanza cada deadline desde su último disparo (no desde "ahora"),
-evitando la acumulación de deriva de fase incluso cuando un runtime se retrasa.
+El executor avanza cada activación desde su último disparo (no desde "ahora"),
+evitando la acumulación de deriva de fase incluso cuando un nodo se retrasa.
 
 **Cuándo usarlo**: períodos irregulares, tareas que a veces se alargan un poco,
 sin overhead de threads.
@@ -498,13 +503,23 @@ benefician del paralelismo real; sistemas con múltiples cores.
 **Limitaciones**: overhead de sincronización de barreras; requiere `-lpthread`
 en POSIX (o el soporte de tasks equivalente en FreeRTOS/Zephyr).
 
+El análisis automático de planificabilidad se activa con
+`rx_*_exec_enable_sched_check(&exec, 1)` y puede reportarse con
+`rx_*_exec_check_schedulability(&exec, &report, log)`. `rx_cyclic_exec`
+comprueba que el hiperperíodo construido con los WCETs medidos cabe en los
+plazos; `rx_coop_exec` aplica análisis iterativo de tiempo de respuesta con el
+bloqueo máximo de tareas menos prioritarias; `rx_thread_exec` usa análisis de
+tiempo de respuesta sólo cuando se ha podido configurar FIFO de prioridades
+fijas. Si FIFO no está disponible, el executor puede seguir funcionando, pero
+el análisis se reporta como no soportado.
+
 ### 6.4 Resumen comparativo de executors
 
 | | `rx_cyclic_exec` | `rx_coop_exec` | `rx_thread_exec` |
 |---|---|---|---|
-| **Threads** | 1 | 1 | 1 por nodo |
+| **Threads** | 1 | 1 | 1 por nodo periódico |
 | **Dispatch** | Tabla estática (hiperperíodo del executive) | Próxima activación + deadline | Grupos de activación + barreras BSP |
-| **Períodos** | Múltiplos del MCD | Cualquiera | Cualquiera |
+| **Períodos** | Mejor con períodos armónicos o hiperperíodo corto | Cualquiera | Cualquiera |
 | **Paralelismo** | No | No | Sí |
 | **Overhead** | Mínimo | Mínimo | Barreras mutex |
 | **Casos típicos** | Bare-metal, RTOS simple | Períodos irregulares | Múltiples cores |
@@ -625,7 +640,10 @@ rx_runtime_init(&rt, &ctx, node_capacity);
 rx_runtime_add_node(&rt, &machine.node, period_us, deadline_us);   /* FSM o PN */
 
 /* Ejecutar un ciclo */
-rx_tick(&rt);
+rx_tick(&rt);  /* tick manual: ejecuta todos los nodos */
+
+/* Instante lógico del grupo activo (lo fijan los executors antes de latch) */
+long activation_us = rx_context_activation_us(&ctx);
 
 /* Encolar acción diferida con prioridad por defecto (NORMAL) */
 rx_context_enqueue_deferred_action(&ctx, action_fn, user_ptr);

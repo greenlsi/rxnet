@@ -13,6 +13,8 @@ The goal of this document is to capture what the Python library provides today, 
 - **Context**: Execution context containing live inputs, latched inputs, and deferred actions
 - **Node**: Runtime unit with `evaluate` and `commit` phases
 - **Deferred_Action**: Action scheduled during commit and executed after all commits
+- **Activation_Group**: Set of nodes activated at the same logical instant
+- **WCET**: Maximum measured complete node tick time, from latch start to dump end
 - **FSM_Runtime**: FSM frontend wrapper over the core runtime (`rxnet.fsm.Runtime`)
 - **FSM_Machine**: State machine node with transitions, guards, and optional actions (`rxnet.fsm.Machine`)
 - **FSM_Transition**: Rule from `from_state` to `to_state`, with optional guard/action (`rxnet.fsm.Transition`)
@@ -36,6 +38,7 @@ The goal of this document is to capture what the Python library provides today, 
 4. WHEN commit completes, THE Core_Runtime SHALL execute deferred actions and clear the queue before dump
 5. WHEN deferred action dispatch completes, THE Core_Runtime SHALL dump outputs for all nodes
 6. THE Tick order SHALL remain `latch -> evaluate -> commit -> dump` in the Python implementation, with deferred action dispatch between commit and dump
+7. WHEN an executor activates multiple nodes at one instant, THE Context SHALL expose the same `activation_us` value to every node in that activation group
 
 ### Requirement 2: Context and Input Snapshot Handling
 
@@ -128,6 +131,10 @@ The goal of this document is to capture what the Python library provides today, 
 
 1. THE runtime SHALL be single-threaded per runtime instance unless external synchronization is provided by the integrator
 2. THE library SHALL not include built-in networking, persistence, or REST APIs
-3. THE library SHALL leave scheduling policy (tick frequency/loop ownership) to the host application
+3. THE library SHALL leave manual tick frequency/loop ownership to the host application
 4. THE library SHALL leave I/O side effects to user-defined action callbacks
 5. THE library SHALL support using one shared typed input structure across multiple model nodes in the same runtime context
+6. THE Core_Runtime SHALL NOT materialise a hyperperiod activation table
+7. THE cyclic, cooperative, and thread executors SHALL own their scheduling state
+8. THE cyclic and cooperative executors SHALL expose schedulability analysis based on measured WCET values
+9. THE thread executor SHALL report schedulability analysis as unsupported when fixed-priority FIFO scheduling is unavailable

@@ -60,4 +60,5 @@ make -C c mix_threads    && ./c/build/fsm_03_mix_threads  # parallel threads
 - `status` — print state and output of A, B, C
 - `freq <hz>` — set base blink frequency for B
 - `timeout <ms>` — set auto-off timeout for C
+- `sched` — report schedulability analysis using measured WCET samples
 - `help`, `quit` / `exit`

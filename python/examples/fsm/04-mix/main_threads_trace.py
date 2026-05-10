@@ -36,6 +36,7 @@ from rxnet.trace import Tracer
 
 import app_driver
 from cli import Cli
+from sched_report import make_sched_command
 from light_fsm import LIGHT_STATE_ON, create_light_fsm
 from auto_fsm import AUTO_STATE_ON, create_auto_fsm, get_auto_off_timeout_ms, set_auto_off_timeout_ms
 from blink_fsm import (
@@ -191,6 +192,7 @@ def main() -> None:
     auto_c.state_names  = {0: "OFF", 1: "ON"}
 
     cli = Cli()
+    te = ThreadExecutive()
     machines = (light_a, blink_b, auto_c)
 
     cli.register("a",        cmd_button_a)
@@ -200,6 +202,7 @@ def main() -> None:
     cli.register("status",   cmd_status,  machines)
     cli.register("freq",     cmd_freq,    machines)
     cli.register("timeout",  cmd_timeout, machines)
+    cli.register("sched",   make_sched_command("thread", te))
     cli.register("help",     lambda l, u: cli.print_help())
     cli.register("quit",     cmd_quit)
     cli.register("exit",     cmd_quit)
@@ -227,7 +230,7 @@ def main() -> None:
     cmd_status("status", machines)
     cli.print_prompt()
 
-    te = ThreadExecutive()
+    te.enable_sched_check(True)
     te.add(rt)
     te.run()  # never returns — cli_node runs in this (main) thread
 

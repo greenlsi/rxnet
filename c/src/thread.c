@@ -67,6 +67,57 @@ thread_priority_rank(const rx_thread_exec *te, rx_runtime *rt, unsigned char idx
     return rank;
 }
 
+typedef struct {
+    rx_runtime *rt;
+    unsigned char node_idx;
+} thread_sched_task_ref;
+
+static int
+resource_used(const int *used_resources, int used_count, int resource_id)
+{
+    int i;
+    for (i = 0; i < used_count; ++i) {
+        if (used_resources[i] == resource_id) return 1;
+    }
+    return 0;
+}
+
+static long
+max_thread_blocking_rec(const thread_sched_task_ref *tasks,
+                        int pos,
+                        int count,
+                        int *used_resources,
+                        int used_count)
+{
+    long best;
+    rx_node_entry *entry;
+    int i;
+
+    if (pos >= count) return 0;
+    best = max_thread_blocking_rec(tasks, pos + 1, count,
+                                   used_resources, used_count);
+    entry = &tasks[pos].rt->nodes[tasks[pos].node_idx];
+    for (i = 0; i < entry->resource_access_count; ++i) {
+        int resource_id = entry->resource_accesses[i].resource_id;
+        long candidate;
+        if (resource_used(used_resources, used_count, resource_id)) continue;
+        used_resources[used_count] = resource_id;
+        candidate = entry->resource_accesses[i].max_us +
+                    max_thread_blocking_rec(tasks, pos + 1, count,
+                                            used_resources, used_count + 1);
+        if (candidate > best) best = candidate;
+    }
+    return best;
+}
+
+static long
+max_thread_blocking(const thread_sched_task_ref *tasks, int first_lower, int count)
+{
+    int used_resources[RXNET_MAX_SHARED_RESOURCES];
+    return max_thread_blocking_rec(&tasks[first_lower], 0, count - first_lower,
+                                   used_resources, 0);
+}
+
 static int
 active_count_at(const rx_thread_group *grp, long activation_us)
 {
@@ -81,7 +132,8 @@ active_count_at(const rx_thread_group *grp, long activation_us)
 }
 
 static rx_thread_activation_group *
-activation_group_get(rx_thread_group *grp, long activation_us)
+activation_group_get(rx_thread_group *grp, long activation_us,
+                     rx_tick_t activation_tick)
 {
     rx_thread_activation_group *free_group = NULL;
     rx_thread_activation_group *found = NULL;
@@ -103,6 +155,7 @@ activation_group_get(rx_thread_group *grp, long activation_us)
             found = free_group;
             found->in_use = 1;
             found->activation_us = activation_us;
+            found->activation_tick = activation_tick;
             found->count = count;
             found->done = 0;
             rx_barrier_reset(&found->eval_b, (unsigned int)count);
@@ -134,21 +187,26 @@ node_loop(rx_thread_arg *a)
     rx_node         *node  = rt->nodes[idx].node;
     rx_context      *ctx   = &grp->node_ctx[idx];
     long      period_us = rt->nodes[idx].period_us;
-    rx_tick_t next      = te->t0;
     long      activation_us = 0;
 
     for (;;) {
         rx_thread_activation_group *ag;
+        rx_tick_t activation_tick;
         rx_tick_t start, end;
 
-        rx_tick_sleep_until(next);
-        ag = activation_group_get(grp, activation_us);
+        activation_tick = rx_tick_add_us(te->t0, activation_us);
+        rx_tick_sleep_until(activation_tick);
+        ag = activation_group_get(grp, activation_us, activation_tick);
         if (ag == NULL) {
             fprintf(stderr, "rxnet: thread_exec_run: active group pool exhausted\n");
             te->stop_requested = 1;
             return;
         }
 
+        rx_context_set_activation_us(ctx, ag->activation_us);
+        ctx->active_entry = &rt->nodes[idx];
+        ctx->shared_resources = &rt->shared_resources;
+        ctx->critical_locking_enabled = 1;
         RX_TRACE_NODE_START(node);
         start = rx_tick_now();
         RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
@@ -166,13 +224,13 @@ node_loop(rx_thread_arg *a)
         rx_barrier_wait(&ag->commit_b);
         RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
         node->vtable->dump_outputs(node, ctx);
+        ctx->active_entry = NULL;
         RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
         end = rx_tick_now();
         touch_wcet(rt, idx, start, end);
         RX_TRACE_NODE_END(node);
         activation_group_done(grp, ag);
 
-        next = rx_tick_add_us(next, period_us);
         activation_us += period_us;
         if (te->stop_requested)
             return;
@@ -233,11 +291,7 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
         return RX_SCHED_UNSUPPORTED;
     }
     {
-        typedef struct {
-            rx_runtime *rt;
-            unsigned char node_idx;
-        } task_ref;
-        task_ref tasks[RXNET_SCHED_MAX_TASKS];
+        thread_sched_task_ref tasks[RXNET_SCHED_MAX_TASKS];
         int count = 0;
         int all_schedulable = 1;
 
@@ -264,7 +318,7 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
         }
 
         for (i = 1; i < count; ++i) {
-            task_ref tmp = tasks[i];
+            thread_sched_task_ref tmp = tasks[i];
             j = i;
             while (j > 0) {
                 int less = thread_task_less(tmp.rt, tmp.node_idx,
@@ -277,14 +331,15 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
             tasks[j] = tmp;
         }
 
-        if (log) fprintf(log, "thread schedulability: tasks=%d B=0\n", count);
+        if (log) fprintf(log, "thread schedulability: tasks=%d\n", count);
 
         for (i = 0; i < count; ++i) {
             rx_node_entry *ei = &tasks[i].rt->nodes[tasks[i].node_idx];
             long ci = ei->wcet_us;
             long di = effective_deadline(ei);
-            long ri_prev = ci;
-            long ri = ci;
+            long bi = max_thread_blocking(tasks, i + 1, count);
+            long ri_prev = ci + bi;
+            long ri = ci + bi;
             int converged = 0;
 
             for (;;) {
@@ -294,7 +349,7 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
                     interference += ((ri_prev + ej->period_us - 1) / ej->period_us) *
                                     ej->wcet_us;
                 }
-                ri = ci + interference;
+                ri = ci + bi + interference;
                 if (ri == ri_prev) {
                     converged = 1;
                     break;
@@ -310,19 +365,27 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
                 tr->period_us = ei->period_us;
                 tr->deadline_us = di;
                 tr->wcet_us = ci;
-                tr->blocking_us = 0;
+                tr->blocking_us = bi;
                 tr->response_us = ri;
-                tr->interference_us = ri - ci;
+                tr->interference_us = ri - ci - bi;
                 tr->schedulable = converged && ri <= di;
+                tr->resource_access_count = ei->resource_access_count;
+                {
+                    int r;
+                    for (r = 0; r < ei->resource_access_count; ++r) {
+                        tr->resource_accesses[r] = ei->resource_accesses[r];
+                    }
+                }
             }
             if (!(converged && ri <= di)) {
                 all_schedulable = 0;
                 if (report != NULL) report->schedulable = 0;
             }
             if (log) {
-                fprintf(log, "node=%u C=%ld T=%ld D=%ld B=0 I=%ld R=%ld %s\n",
+                fprintf(log, "node=%u C=%ld T=%ld D=%ld B=%ld I=%ld R=%ld %s\n",
                         (unsigned)tasks[i].node_idx, ci, ei->period_us, di,
-                        ri - ci, ri, (converged && ri <= di) ? "OK" : "MISS");
+                        bi, ri - ci - bi, ri,
+                        (converged && ri <= di) ? "OK" : "MISS");
             }
         }
         ret = all_schedulable ? RX_SCHED_SCHEDULABLE : RX_SCHED_UNSCHEDULABLE;
@@ -365,6 +428,8 @@ rx_thread_exec_add(rx_thread_exec *te, rx_runtime *rt)
             return -1;
         }
         if (rx_context_init(&grp->node_ctx[i]) != 0) return -1;
+        grp->node_ctx[i].shared_resources = &rt->shared_resources;
+        grp->node_ctx[i].critical_locking_enabled = 1;
     }
 
     for (s = 0; s < (int)RXNET_THREAD_MAX_ACTIVE_GROUPS; s++) {

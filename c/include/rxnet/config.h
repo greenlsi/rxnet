@@ -28,6 +28,14 @@
 #error "RXNET_MAX_RUNTIME_NODES must be >= 1"
 #endif
 
+#ifndef RXNET_MAX_SHARED_RESOURCES
+#define RXNET_MAX_SHARED_RESOURCES 16u
+#endif
+
+#if RXNET_MAX_SHARED_RESOURCES < 1u
+#error "RXNET_MAX_SHARED_RESOURCES must be >= 1"
+#endif
+
 /* Deprecated runtime slot table limit, retained for thread executor ABI. */
 #ifndef RXNET_MAX_RUNTIME_SLOTS
 #define RXNET_MAX_RUNTIME_SLOTS 32u

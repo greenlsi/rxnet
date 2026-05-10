@@ -21,11 +21,12 @@ typedef struct {
     int *order_log;
     int *order_count;
     int phase_id; /* unique ID for this node, used in order log */
+    long latch_activation_us;
 } test_node;
 
 static void test_node_latch(rx_node *n, rx_context *ctx) {
     test_node *tn = (test_node *)n;
-    (void)ctx;
+    tn->latch_activation_us = rx_context_activation_us(ctx);
     tn->latch_calls++;
     if (tn->order_log) {
         tn->order_log[(*tn->order_count)++] = tn->phase_id * 10 + 0;
@@ -74,6 +75,7 @@ static void test_node_init(test_node *tn) {
     tn->order_log    = NULL;
     tn->order_count  = NULL;
     tn->phase_id     = 0;
+    tn->latch_activation_us = 0;
 }
 
 /* Deferred action test helper */
@@ -109,6 +111,19 @@ static void context_init_rejects_null(void) {
 static void context_init_succeeds(void) {
     rx_context ctx;
     ASSERT_EQ(0, rx_context_init(&ctx));
+}
+
+static void context_init_sets_activation_time_to_zero(void) {
+    rx_context ctx;
+    ASSERT_EQ(0, rx_context_init(&ctx));
+    ASSERT_EQ(0, rx_context_activation_us(&ctx));
+}
+
+static void context_activation_time_can_be_set(void) {
+    rx_context ctx;
+    ASSERT_EQ(0, rx_context_init(&ctx));
+    rx_context_set_activation_us(&ctx, 20000);
+    ASSERT_EQ(20000, rx_context_activation_us(&ctx));
 }
 
 static void context_create_returns_valid_context(void) {
@@ -345,6 +360,25 @@ static void tick_nodes_updates_wcet_for_selected_nodes_only(void) {
     ASSERT_TRUE(rt.nodes[1].wcet_us > 0);
 }
 
+static void tick_nodes_at_sets_shared_activation_time(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    test_node a, b;
+    unsigned char active[] = {0, 1};
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 2);
+    test_node_init(&a);
+    test_node_init(&b);
+
+    rx_runtime_add_node(&rt, &a.node, 10000, 0);
+    rx_runtime_add_node(&rt, &b.node, 20000, 0);
+
+    ASSERT_EQ(0, rx_runtime_tick_nodes_at(&rt, active, 2, 20000));
+    ASSERT_EQ(20000, a.latch_activation_us);
+    ASSERT_EQ(20000, b.latch_activation_us);
+}
+
 /*
  * Phase order for a single node must be:
  *   latch(0) → evaluate(1) → commit(2) → [deferred actions] → dump(3)
@@ -470,6 +504,41 @@ static void thread_sched_check_uses_response_time_analysis(void) {
     ASSERT_EQ(3000, report.tasks[1].response_us);
 }
 
+static void thread_sched_check_uses_shared_resource_blocking(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    rx_thread_exec te;
+    rx_sched_report report;
+    test_node high, low_a, low_b;
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 3);
+    test_node_init(&high);
+    test_node_init(&low_a);
+    test_node_init(&low_b);
+
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &high.node, 10000, 10000));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &low_a.node, 20000, 20000));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &low_b.node, 30000, 30000));
+    rt.nodes[0].wcet_us = 1000;
+    rt.nodes[1].wcet_us = 1000;
+    rt.nodes[2].wcet_us = 1000;
+    rt.nodes[1].resource_access_count = 2;
+    rt.nodes[1].resource_accesses[0].resource_id = 1;
+    rt.nodes[1].resource_accesses[0].max_us = 300;
+    rt.nodes[1].resource_accesses[1].resource_id = 2;
+    rt.nodes[1].resource_accesses[1].max_us = 700;
+    rt.nodes[2].resource_access_count = 1;
+    rt.nodes[2].resource_accesses[0].resource_id = 1;
+    rt.nodes[2].resource_accesses[0].max_us = 500;
+
+    rx_thread_exec_init(&te);
+    ASSERT_EQ(0, rx_thread_exec_add(&te, &rt));
+    ASSERT_EQ(RX_SCHED_SCHEDULABLE,
+              rx_thread_exec_check_schedulability(&te, &report, NULL));
+    ASSERT_EQ(1200, report.tasks[0].blocking_us);
+}
+
 static void thread_exec_rejects_async_nodes(void) {
     rx_context ctx;
     rx_runtime rt;
@@ -573,6 +642,8 @@ int main(void) {
     TEST_SUITE("context lifecycle");
     RUN_TEST(context_init_rejects_null);
     RUN_TEST(context_init_succeeds);
+    RUN_TEST(context_init_sets_activation_time_to_zero);
+    RUN_TEST(context_activation_time_can_be_set);
     RUN_TEST(context_create_returns_valid_context);
     RUN_TEST(context_destroy_null_is_safe);
     RUN_TEST(context_free_null_is_safe);
@@ -599,6 +670,7 @@ int main(void) {
     RUN_TEST(runtime_destroy_null_is_safe);
     RUN_TEST(runtime_build_does_not_materialize_activation_table);
     RUN_TEST(thread_sched_check_uses_response_time_analysis);
+    RUN_TEST(thread_sched_check_uses_shared_resource_blocking);
     RUN_TEST(thread_exec_rejects_async_nodes);
 
     TEST_SUITE("tick execution");
@@ -606,6 +678,7 @@ int main(void) {
     RUN_TEST(tick_calls_all_phases_on_registered_node);
     RUN_TEST(tick_nodes_runs_only_selected_active_group);
     RUN_TEST(tick_nodes_updates_wcet_for_selected_nodes_only);
+    RUN_TEST(tick_nodes_at_sets_shared_activation_time);
     RUN_TEST(tick_phases_execute_in_correct_order);
     RUN_TEST(tick_deferred_actions_run_after_all_commits);
 

@@ -29,6 +29,7 @@
 #include "cli_fsm.h"
 #include "light_fsm.h"
 #include "light_pn.h"
+#include "sched_report.h"
 
 #define BUTTON_A_GPIO  0
 #define BUTTON_B_GPIO  15
@@ -91,6 +92,7 @@ int main(void)
     rx_fsm_machine cli_machine;
     cli_machine_data cli_data;
     rx_coop_exec ce;
+    rx_example_coop_sched_command sched_cmd = {"coop", &ce};
 
     /* --- initialise base runtime ----------------------------------- */
     if (rx_context_init(&ctx) != 0) {
@@ -131,6 +133,7 @@ int main(void)
     cli_fsm_data_init(&cli_data, NULL);
     if (cli_fsm_register_command(&cli_data, "a",    cmd_a,    NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "b",    cmd_b,    NULL) != 0 ||
+        cli_fsm_register_command(&cli_data, "sched", rx_example_cmd_coop_sched, &sched_cmd) != 0 ||
         cli_fsm_register_command(&cli_data, "quit", cmd_quit, NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "exit", cmd_quit, NULL) != 0) {
         fprintf(stderr, "cli_fsm_register_command failed\n");
@@ -155,6 +158,7 @@ int main(void)
     rx_coop_exec_init(&ce);
     rx_coop_exec_add(&ce, &cli_rt.runtime);
     rx_coop_exec_add(&ce, &rt);
+    rx_coop_exec_enable_sched_check(&ce, 1);
     rx_coop_exec_run(&ce); /* never returns */
 
     return 0;

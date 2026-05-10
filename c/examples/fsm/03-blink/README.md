@@ -27,4 +27,5 @@ CLI commands:
 - `b` or `press b`: trigger button B (affects light C)
 - `status`: print states, outputs, base and effective frequencies
 - `freq <a|b|c> <hz>`: set base frequency for one light
+- `sched`: report schedulability analysis using measured WCET samples
 - `quit`: exit

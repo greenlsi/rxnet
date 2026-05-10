@@ -128,12 +128,12 @@ class Runtime:
     def nets(self) -> Sequence[Net]:
         return [node for node in self._core.nodes if isinstance(node, Net)]
 
-    def add_net(self, net: Net, period_us: int = 0) -> None:
-        self._core.add_node(net, period_us)
+    def add_net(self, net: Net, period_us: int = 0, deadline_us: int = 0) -> None:
+        self._core.add_node(net, period_us, deadline_us)
 
-    def add_node(self, node: Any, period_us: int = 0) -> None:
+    def add_node(self, node: Any, period_us: int = 0, deadline_us: int = 0) -> None:
         """Register a non-Net node (e.g. a CliNode wrapper)."""
-        self._core.add_node(node, period_us)
+        self._core.add_node(node, period_us, deadline_us)
 
     def build(self) -> None:
         self._core.build()
@@ -164,3 +164,6 @@ class Runtime:
 
     def tick(self) -> None:
         self._core.tick()
+
+    def tick_nodes_at(self, node_indices, activation_us: int) -> None:
+        self._core.tick_nodes_at(node_indices, activation_us)

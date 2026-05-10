@@ -3,7 +3,7 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -Iinclude
 # _POSIX_C_SOURCE must be defined before the first system header in every
 # translation unit.  Use 'override' so this survives a command-line CFLAGS=…
 override CFLAGS += -D_POSIX_C_SOURCE=200809L
-EXAMPLE_CFLAGS ?= $(CFLAGS) -Wno-unused-parameter
+EXAMPLE_CFLAGS ?= $(CFLAGS) -Iexamples -Wno-unused-parameter
 TRACE_CFLAGS := $(CFLAGS) -DRX_TRACE_ENABLE
 BUILD_DIR ?= build
 

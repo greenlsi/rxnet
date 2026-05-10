@@ -34,6 +34,7 @@
 #include "light_pn.h"
 #include "auto_pn.h"
 #include "blink_pn.h"
+#include "sched_report.h"
 
 #define LIGHT_A_GPIO         2
 #define LIGHT_B_GPIO         4
@@ -175,6 +176,7 @@ int main(void) {
     app_data app = {&light_a, &blink_b, &auto_c};
     cli_machine_data cli_data;
     rx_thread_exec te;
+    rx_example_thread_sched_command sched_cmd = {"thread", &te};
 
     if (rx_pn_runtime_init(&pn_rt,  3) != 0 ||
         rx_fsm_runtime_init(&cli_rt, 1) != 0) {
@@ -205,6 +207,7 @@ int main(void) {
         cli_fsm_register_command(&cli_data, "freq",     cmd_freq,     &app) != 0 ||
         cli_fsm_register_command(&cli_data, "timeout",  cmd_timeout,  &app) != 0 ||
         cli_fsm_register_command(&cli_data, "trace",    cmd_trace,    NULL) != 0 ||
+        cli_fsm_register_command(&cli_data, "sched",    rx_example_cmd_thread_sched, &sched_cmd) != 0 ||
         cli_fsm_register_command(&cli_data, "help",     cmd_help,     NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "quit",     cmd_quit,     NULL) != 0 ||
         cli_fsm_register_command(&cli_data, "exit",     cmd_quit,     NULL) != 0) {
@@ -254,6 +257,7 @@ int main(void) {
     rx_thread_exec_init(&te);
     rx_thread_exec_add(&te, &pn_rt.runtime);   /* light_a + blink_b + auto_c → threads */
     rx_thread_exec_add(&te, &cli_rt.runtime);  /* cli → main thread (last)             */
+    rx_thread_exec_enable_sched_check(&te, 1);
     rx_thread_exec_run(&te); /* never returns */
 
     return 0;

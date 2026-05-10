@@ -37,8 +37,9 @@ Requires Python 3.11+.
 
 ## Multi-rate scheduling
 
-Each node registers its own `period_us` (microseconds).  The runtime
-computes the hyperperiod dispatch table at build time:
+Each node registers its own `period_us` and optional `deadline_us`
+(microseconds).  The runtime validates the metadata and computes only the base
+period; executors own the activation table or next-activation state:
 
 ```python
 from rxnet.fsm import Machine, Runtime
@@ -49,16 +50,14 @@ rt.add_machine(blink_b,  10_000)   # 10 ms
 rt.add_machine(auto_c,   20_000)   # 20 ms
 rt.add_node(cli_node,    10_000)   # 10 ms — any node, not just Machine
 
-# base  = GCD(10, 10, 20, 10) = 10 ms  →  rt.period_us
-# hyper = LCM(10, 10, 20, 10) = 20 ms  →  2 slots
-#
-# slot 0 (t = 0, 20, …): all four nodes
-# slot 1 (t = 10, 30, …): light_a + blink_b + cli_node
+# base = GCD(10, 10, 20, 10) = 10 ms  →  rt.period_us
+# rt.nslots == 0: the runtime no longer materializes activation slots
 ```
 
-`period_us=0` (default) marks a node as *async*: it runs on every base
-tick regardless of slot, preserving backward compatibility with code that
-doesn't register periods.
+`period_us=0` (default) marks a node as *async*. Manual `rt.tick()` runs all
+nodes. Multi-rate executors include async nodes when they service a runtime;
+`ThreadExecutive` rejects async nodes because one async thread cannot safely
+join multiple overlapping activation groups.
 
 ## Executors
 
@@ -66,8 +65,8 @@ Three executors drive one or more runtimes at the correct intervals.
 
 ### `CyclicExecutive` — static hyperperiod dispatch
 
-Calls `rt.tick()` at regular intervals based on `rt.period_us`.  Uses a
-fixed slot table; simplest model, no concurrency.
+Builds a fixed hyperperiod table inside the executive and calls explicit node
+groups at each base tick; simplest model, no concurrency.
 
 ```python
 from rxnet import CyclicExecutive
@@ -79,8 +78,9 @@ ce.run()   # returns when ce.stop() is requested
 
 ### `CoopExecutive` — cooperative deadline scheduler
 
-Fires `rt.tick()` whenever the next deadline passes.  Overrun-tolerant:
-deadline advances by one period regardless of actual execution time.
+Runs the due nodes whose next activation has passed, ordered by effective
+deadline.  Overrun-tolerant: each activation advances by one period regardless
+of actual execution time.
 Supports multiple independent runtimes.
 
 ```python
@@ -93,9 +93,9 @@ ce.run()   # returns when ce.stop() is requested
 
 ### `ThreadExecutive` — BSP thread-per-node
 
-Gives each node its own `threading.Thread`.  Three `threading.Barrier`
-objects per hyperperiod slot enforce the reactive-synchronous guarantee
-(latch → evaluate → commit → dump).
+Gives each periodic node its own `threading.Thread`.  Per-activation groups use
+two barriers: after evaluate, and after commit plus deferred action dispatch.
+All nodes in one activation group see the same `ctx.activation_us`.
 
 The **last node of the last runtime** runs in the calling (main) thread —
 add a `CliNode` last to keep stdin access in the main thread.
@@ -111,6 +111,13 @@ te.run()   # returns when te.stop() is requested
 All executors accept an optional `on_stop` callback, or one can be
 registered later with `.on_stop(callback)`, to run application/model
 shutdown logic once before `run()` returns.
+
+Executors can enable automatic schedulability checks with
+`.enable_sched_check(True)` and report calculations with `.check_schedulability()`.
+`CyclicExecutive` checks the hyperperiod table with measured WCETs;
+`CoopExecutive` uses response-time analysis with cooperative blocking;
+`ThreadExecutive` reports the analysis as unsupported because Python does not
+provide fixed-priority FIFO thread scheduling.
 
 ## Basic integration pattern (FSM)
 

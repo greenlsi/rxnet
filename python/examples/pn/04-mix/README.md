@@ -28,7 +28,8 @@ rt.add_net(auto_c,    20_000)   # 20 ms
 rt.add_node(cli_node, 10_000)   # 10 ms
 ```
 
-The runtime computes the hyperperiod table at build time:
+The runtime computes only the base period; the cyclic executive computes the
+hyperperiod table:
 
 ```
 base  = GCD(10, 10, 20, 10) = 10 ms  →  rt.period_us
@@ -44,20 +45,18 @@ they see the same latched button event in the same latch phase.  C uses
 
 ### Execution model notes
 
-**`main.py` (cyclic executive)**: `CyclicExecutive` drives the single
-runtime with a static slot table.  `rt.tick()` is called every 10 ms.
-Nodes run sequentially.  Simplest model — no concurrency.
+**`main.py` (cyclic executive)**: `CyclicExecutive` drives explicit active node
+groups with a static slot table every 10 ms. Nodes run sequentially. Simplest
+model — no concurrency.
 
-**`main_coop.py` (cooperative)**: `CoopExecutive` drives the runtime
-dynamically: it fires `rt.tick()` whenever the next deadline has passed.
-Overrun-tolerant — deadline advances by one period regardless of actual
-execution time.
+**`main_coop.py` (cooperative)**: `CoopExecutive` dynamically runs due node
+groups whenever the next activation has passed. Overrun-tolerant — deadline
+advances by one period regardless of actual execution time.
 
-**`main_threads.py` (BSP threads)**: `ThreadExecutive` gives each node
-its own `threading.Thread`.  Three `threading.Barrier` objects per slot
-enforce the reactive-synchronous guarantee (latch → evaluate → commit →
-dump).  The **cli node is added last** and runs in the main thread to
-keep stdin access.
+**`main_threads.py` (BSP threads)**: `ThreadExecutive` gives each periodic node
+its own `threading.Thread`. Two barriers per active group enforce the
+reactive-synchronous guarantee. The **cli node is added last** and runs in the
+main thread to keep stdin access.
 
 **`main_async.py` (asyncio — legacy)**: two asyncio Tasks drive separate
 runtimes at different rates.  Kept for reference; the three models above
@@ -93,5 +92,6 @@ uv run examples/pn/04-mix/main_async.py     # asyncio (legacy)
 - `status` — print state of A, B, C
 - `freq <hz>` — set base blink frequency for B
 - `timeout <ms>` — set auto-off timeout for C
+- `sched` — report schedulability analysis using measured WCET samples
 - `help` — list commands
 - `quit` / `exit`
