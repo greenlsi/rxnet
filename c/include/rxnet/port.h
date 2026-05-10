@@ -31,8 +31,12 @@
  *   Thread
  *   ------
  *   rx_thread_t                           // opaque type
- *   int  rx_thread_create(rx_thread_t *t, void (*fn)(void *), void *arg)
+ *   typedef void *(*rx_thread_fn)(void *arg)
+ *   int  rx_thread_create(rx_thread_t *t, rx_thread_fn fn, void *arg)
  *        // returns 0 on success, -1 on failure
+ *   int  rx_thread_configure_fifo(rx_thread_t *t, int priority_rank, int ranks)
+ *   int  rx_thread_configure_current_fifo(int priority_rank, int ranks)
+ *        // priority_rank 0 is highest; returns -1 if FIFO is unavailable
  *
  *   Barrier (BSP — bulk-synchronous parallel)
  *   -----------------------------------------
@@ -42,6 +46,8 @@
  *   void rx_barrier_wait(rx_barrier_t *b)
  *        // blocks until `count` threads have called wait()
  *        // generation-based: reusable across multiple rounds
+ *   void rx_barrier_reset(rx_barrier_t *b, unsigned int count)
+ *        // reset reusable barrier state while no thread is waiting
  *
  * The port header also sets the defaults for the trace subsystem hooks
  * (RX_TRACE_NOW_NS, RX_TRACE_LOCK_TYPE, RX_TRACE_LOCK_INIT, …) so that

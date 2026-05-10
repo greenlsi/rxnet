@@ -7,13 +7,18 @@ Available in **C** (embedded-ready, allocation-free) and **Python** (for simulat
 
 ## How it works
 
-Every tick runs the same five phases, in order, across all registered nodes:
+Every tick runs the same four node phases, in order, across all active nodes:
 
 1. **Latch inputs** — each node snapshots its inputs (safe to call from any driver)
 2. **Evaluate** — compute next state / fire transitions against the snapshot
-3. **Commit** — publish new state; enqueue deferred actions
-4. **Run deferred actions** — side-effect callbacks fire after all commits
-5. **Dump outputs** — each node writes its outputs to hardware or downstream
+3. **Commit** — publish new state and dispatch the deferred actions queued by evaluation
+4. **Dump outputs** — each node writes its outputs to hardware or downstream
+
+The runtime enforces two synchronization points for each activation group:
+all active nodes finish `evaluate` before any `commit` starts, and all active
+nodes finish `commit` before any `dump` starts.  Deferred actions run after
+the commit barrier and before dump, but they are part of commit semantics, not
+a separate node phase.
 
 All nodes see a consistent snapshot.  No node can observe a half-committed peer.
 

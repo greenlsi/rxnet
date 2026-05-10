@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "rxnet/config.h"
 
@@ -20,9 +21,37 @@ typedef struct rx_node_entry rx_node_entry;
 typedef struct rx_runtime_slot rx_runtime_slot;
 typedef struct rx_deferred_action_entry rx_deferred_action_entry;
 typedef struct rx_worker_pool rx_worker_pool;
+typedef struct rx_sched_task_result rx_sched_task_result;
+typedef struct rx_sched_report rx_sched_report;
 
 typedef void (*rx_deferred_action_fn)(rx_context *ctx, void *user);
 typedef void (*rx_node_phase_fn)(rx_node *node, rx_context *ctx);
+
+#define RX_SCHED_UNSCHEDULABLE 0
+#define RX_SCHED_SCHEDULABLE   1
+#define RX_SCHED_ERROR        -1
+#define RX_SCHED_UNSUPPORTED  -2
+
+#define RXNET_SCHED_MAX_TASKS (RXNET_CE_MAX_TASKS * RXNET_MAX_RUNTIME_NODES)
+
+struct rx_sched_task_result {
+    rx_runtime   *rt;
+    unsigned char node_idx;
+    long          period_us;
+    long          deadline_us;
+    long          wcet_us;
+    long          interference_us;
+    long          blocking_us;
+    long          response_us;
+    int           schedulable;
+};
+
+struct rx_sched_report {
+    int schedulable;
+    int unsupported;
+    int task_count;
+    rx_sched_task_result tasks[RXNET_SCHED_MAX_TASKS];
+};
 
 /* ------------------------------------------------------------------ */
 /* Priority                                                             */
@@ -102,9 +131,8 @@ struct rx_node {
 /*
  * rx_node_entry — associates a node with its scheduling parameters.
  *
- * period_us   Activation period in microseconds.  0 = async: the node
- *             runs in every slot (event-driven; advances only when its
- *             own guards fire).
+ * period_us   Activation period in microseconds.  0 = async: executors
+ *             include the node when they service the runtime.
  * deadline_us Relative deadline in microseconds.  0 = same as period_us.
  *             Must satisfy deadline_us <= period_us when both are > 0.
  *
@@ -115,17 +143,17 @@ struct rx_node_entry {
     rx_node *node;
     long     period_us;
     long     deadline_us;
+    long     wcet_us;
 };
 
 /* ------------------------------------------------------------------ */
-/* Per-slot activation record (built by rx_runtime_build)              */
+/* Deprecated per-slot activation record                               */
 /* ------------------------------------------------------------------ */
 
 /*
- * rx_runtime_slot — ordered list of node indices active in one base tick.
- *
- * Periodic nodes are listed first, sorted by effective deadline (EDF).
- * Async nodes (period_us == 0) are appended last.
+ * rx_runtime_slot is retained for ABI/source compatibility with the thread
+ * executor while its scheduler is being moved out of the runtime.  The base
+ * runtime no longer owns or fills a hyperperiod activation table.
  */
 struct rx_runtime_slot {
     unsigned char node_idx[RXNET_MAX_RUNTIME_NODES]; /* indices into rx_runtime.nodes */
@@ -154,9 +182,9 @@ struct rx_runtime {
     size_t node_count;
     size_t node_capacity;
 
-    /* Internal hyperperiod dispatch table (filled by rx_runtime_build). */
+    /* Deprecated scheduler state.  Runtime no longer fills this table. */
     rx_runtime_slot slots_storage[RXNET_MAX_RUNTIME_SLOTS];
-    int nslots;        /* 0 until rx_runtime_build() succeeds */
+    int nslots;
     int current_slot;
 };
 
@@ -209,31 +237,34 @@ void rx_runtime_destroy(rx_runtime *rt);
  * period_us   0 = async (runs every base tick); > 0 = periodic.
  * deadline_us 0 = same as period_us; > 0 = explicit deadline (<= period_us).
  *
- * Invalidates any previously built slot table (nslots reset to 0).
+ * Invalidates previously computed scheduling metadata (period_us/nslots reset).
  * Returns 0 on success, -1 on invalid arguments or capacity exceeded.
  */
 int rx_runtime_add_node(rx_runtime *rt, rx_node *node,
                         long period_us, long deadline_us);
 
 /*
- * Build the internal hyperperiod dispatch table.
+ * Validate scheduling parameters and compute runtime metadata.
  *
  * Computes:
- *   base_us  = GCD of all periodic node periods  → rt->period_us
- *   hyper_us = LCM of all periodic node periods
- *   nslots   = hyper_us / base_us
+ *   base_us = GCD of all periodic node periods  → rt->period_us
  *
  * Performs schedulability checks:
  *   - deadline_us <= period_us for all periodic nodes with explicit deadlines
- *   - nslots <= RXNET_MAX_RUNTIME_SLOTS
+ * It does not build per-slot activation lists; executors own scheduling.
  *
- * Builds per-slot activation lists sorted by effective deadline (EDF).
- * Async nodes (period_us == 0) run in every slot, appended after periodic ones.
- *
- * Called automatically by rx_cyclic_exec_add() if not called first.
+ * Called automatically by multi-rate executives when a runtime is registered.
  * Returns 0 on success, -1 on error (prints reason to stderr).
  */
 int rx_runtime_build(rx_runtime *rt);
+
+/*
+ * Execute one synchronous tick for an explicit ordered list of node indices.
+ * Executors own scheduling policy and pass the active nodes for this tick.
+ */
+int rx_runtime_tick_nodes(rx_runtime *rt,
+                          const unsigned char *node_idx,
+                          int count);
 
 void rx_node_set_latch_inputs_callback(rx_node *node, rx_node_phase_fn cb);
 void rx_node_set_dump_outputs_callback(rx_node *node, rx_node_phase_fn cb);
@@ -241,12 +272,9 @@ void rx_node_set_dump_outputs_callback(rx_node *node, rx_node_phase_fn cb);
 /*
  * Execute one tick of the runtime.
  *
- * If the slot table has been built (nslots > 0):
- *   runs only the nodes active in the current slot, in EDF order,
- *   then advances to the next slot.
- *
- * If the slot table has not been built (nslots == 0):
- *   runs all registered nodes (unscheduled / manual-tick mode).
+ * Runs all registered nodes in registration order (manual-tick mode).
+ * Multi-rate executives call rx_runtime_tick_nodes() with their own active
+ * node list instead.
  */
 int rx_tick(rx_runtime *rt);
 

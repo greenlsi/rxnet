@@ -1,26 +1,25 @@
 ## 3. El tick y sus fases
 
-Cada llamada a `rx_tick()` ejecuta cinco fases en orden estricto:
+Cada llamada a `rx_tick()` ejecuta cuatro fases de nodo en orden estricto:
 
 | # | Fase | Qué hace cada nodo |
 |---|---|---|
-| 1 | **Latch inputs** | `latch_inputs_cb(ctx, user)` — leer GPIO, calcular señales derivadas, tomar snapshot |
+| 1 | **Latch** | `latch_inputs_cb(ctx, user)` — leer GPIO, calcular señales derivadas, tomar snapshot |
 | 2 | **Evaluate** | `evaluate()` — decidir siguiente estado / flags (solo lectura del snapshot) |
-| 3 | **Commit** | `commit()` — aplicar decisiones, encolar acciones diferidas |
-| 4 | **Deferred** | ejecutar cola de acciones — timers, side-effects, notificaciones |
-| 5 | **Dump outputs** | `dump_outputs_cb(ctx, user)` — escribir GPIO, actualizar salidas |
+| 3 | **Commit** | `commit()` — aplicar decisiones; tras el commit de todos, ejecutar acciones diferidas |
+| 4 | **Dump** | `dump_outputs_cb(ctx, user)` — escribir GPIO, actualizar salidas |
 
 ### Por qué esa separación de fases
 
-La separación **evaluate / commit / deferred** no es arbitraria:
+La separación **evaluate / commit / dump** no es arbitraria:
 
 * **Evaluate** solo puede leer, nunca escribir estado observable. Todos los
   módulos ven el mismo estado del sistema al mismo tiempo.
-* **Commit** aplica las decisiones. Tras commit, el estado es consistente pero
-  los efectos externos todavía no han ocurrido.
-* **Deferred** ejecuta las acciones (arrancar un timer, encender un LED) *después*
-  de que todo el mundo haya aplicado sus decisiones. Una acción ve el estado
-  comprometido de todos los módulos, no solo el propio.
+* **Commit** aplica las decisiones. Las acciones diferidas encoladas durante
+  `evaluate` se ejecutan después de que todos los nodos activos hayan hecho
+  commit, antes de cualquier `dump`. Una acción ve el estado comprometido de
+  todos los módulos, no solo el propio.
+* **Dump** publica las salidas después de commit y de las acciones diferidas.
 
 La separación **latch / dump** garantiza que las lecturas de hardware ocurren
 *antes* de evaluar (snapshot limpio) y las escrituras *después* de decidir
@@ -80,8 +79,8 @@ rx_fsm_machine_init(
     transitions,
     sizeof(transitions) / sizeof(*transitions),
     &data,                                 /* user pointer */
-    light_latch_cb,                        /* fase 1 */
-    light_dump_cb                          /* fase 5 */
+    light_latch_cb,                        /* fase latch */
+    light_dump_cb                          /* fase dump */
 );
 ```
 
@@ -99,7 +98,7 @@ static int button_pressed(const rx_fsm_context *ctx, void *user) {
     return d->latched_event;
 }
 
-/* Acción: deferred, corre en fase 4 con estado ya comprometido */
+/* Acción: deferred, corre tras commit con estado ya comprometido */
 static void light_on(rx_fsm_context *ctx, void *user) {
     light_data_t *d = user;
     (void)ctx;
@@ -119,14 +118,14 @@ Son funciones puras de lectura. Los efectos van en las acciones.
 ### 4.4 Callbacks de fase
 
 ```c
-/* Fase 1: tomar snapshot de entradas */
+/* Fase latch: tomar snapshot de entradas */
 static void light_latch_cb(rx_fsm_context *ctx, void *user) {
     light_data_t *d = user;
     (void)ctx;
     d->latched_event = read_button_gpio();
 }
 
-/* Fase 5: escribir salidas */
+/* Fase dump: escribir salidas */
 static void light_dump_cb(rx_fsm_context *ctx, void *user) {
     const light_data_t *d = user;
     (void)ctx;
@@ -306,8 +305,8 @@ rx_pn_net_init(
     initial_places, 3,
     transitions,    2,
     NULL,           /* user pointer */
-    light_latch_cb, /* fase 1 — NULL → noop */
-    light_dump_cb   /* fase 5 — NULL → noop */
+    light_latch_cb, /* fase latch — NULL → noop */
+    light_dump_cb   /* fase dump — NULL → noop */
 );
 ```
 
@@ -466,13 +465,18 @@ sin overhead de threads.
 
 ### 6.3 Threads paralelos — `rx_thread_exec`
 
-Un pthread por nodo. Dos barreras BSP por slot sincronizan las fases reactivas
-con verdadero paralelismo:
+Un thread por nodo periódico. El executor crea grupos de activación para cada
+instante absoluto activo, sin materializar una tabla de hiperperíodo. Dos
+barreras BSP por grupo sincronizan las fases reactivas con verdadero
+paralelismo:
 
-- `latch_b[s]`: todos los nodos activos en el slot `s` llegan → latch y eval en paralelo.
-- `commit_b[s]`: todas las evaluaciones terminan → commit en paralelo.
+- `eval_b`: todos los nodos activos han hecho `latch` y `evaluate`.
+- `commit_b`: todos los nodos activos han hecho `commit` y despachado acciones diferidas.
 
 El último nodo del último runtime corre en el hilo llamante (útil para el nodo CLI/stdin).
+Los nodos async (`period_us = 0`) no están soportados en `rx_thread_exec`,
+porque un solo thread async no puede participar con seguridad en varios grupos
+de activación solapados.
 
 ```c
 #include "rxnet/thread.h"
@@ -499,7 +503,7 @@ en POSIX (o el soporte de tasks equivalente en FreeRTOS/Zephyr).
 | | `rx_cyclic_exec` | `rx_coop_exec` | `rx_thread_exec` |
 |---|---|---|---|
 | **Threads** | 1 | 1 | 1 por nodo |
-| **Dispatch** | Tabla estática (hiperperíodo) | Deadline dinámico | Barreras BSP |
+| **Dispatch** | Tabla estática (hiperperíodo del executive) | Próxima activación + deadline | Grupos de activación + barreras BSP |
 | **Períodos** | Múltiplos del MCD | Cualquiera | Cualquiera |
 | **Paralelismo** | No | No | Sí |
 | **Overhead** | Mínimo | Mínimo | Barreras mutex |
@@ -514,8 +518,8 @@ ejecute el siguiente tick).
 **Tokens de PN como mensajes**: el productor escribe `net.places[P_BUFFER]` en
 su `latch_inputs_cb`; el consumidor dispara la transición que consume ese token.
 
-**Acciones diferidas**: cualquier callback puede encolar una acción para la
-fase deferred del tick actual:
+**Acciones diferidas**: cualquier callback puede encolar una acción para el
+despacho deferred del tick actual:
 
 ```c
 rx_context_enqueue_deferred_action(ctx, my_action_fn, user_ptr);
@@ -597,7 +601,8 @@ for (;;) {
 ```
 
 Al compartir el mismo `rx_context`, las acciones diferidas de la FSM y de la
-PN se ejecutan todas en la misma fase deferred del tick.
+PN se ejecutan todas en el mismo despacho deferred del tick, después de commit
+y antes de dump.
 
 ---
 
@@ -740,7 +745,7 @@ static int my_guard(const rx_fsm_context *ctx, void *user) {
     return ((my_data_t *)user)->latched_event;
 }
 
-/* Acción: deferred, corre en fase 4 con estado ya comprometido */
+/* Acción: deferred, corre tras commit con estado ya comprometido */
 static void my_action(rx_fsm_context *ctx, void *user) {
     (void)ctx;
     ((my_data_t *)user)->output = 1;

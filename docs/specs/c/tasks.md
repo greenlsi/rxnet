@@ -235,13 +235,13 @@ Tasks are marked as completed when they reflect the current repository state, an
 
 - [x] 23. Añadir executors multi-rate y soporte multi-scheduler
   - [x] 23.1 Implementar `rx_cyclic_exec` — ejecutivo cíclico con tabla de hiperperíodo
-    - Período por nodo (`period_us`), cálculo automático de MCD/MCM, tabla de slots estática
+    - Período por nodo (`period_us`), cálculo automático de MCD/MCM, tabla de slots estática propiedad del executive
     - _Requirements: 14.3, 14.4_
   - [x] 23.2 Implementar `rx_coop_exec` — scheduler cooperativo por deadline
-    - Deadline dinámico por runtime, avance de fase sin acumulación de deriva
+    - Próxima activación por nodo y orden por deadline, sin tabla de hiperperíodo
     - _Requirements: 14.3_
   - [x] 23.3 Implementar `rx_thread_exec` — scheduler paralelo con barreras BSP
-    - Un pthread por nodo, dos barreras generacionales por slot (latch_b, commit_b)
+    - Un thread por nodo periódico, grupos de activación bajo demanda y dos barreras generacionales por grupo (`eval_b`, `commit_b`)
     - Último nodo del último runtime corre en el hilo llamante (útil para CLI/stdin)
     - _Requirements: 14.3_
   - [x] 23.4 Añadir ejemplos 04-mix para FSM y PN (cyclic, coop, threads, y variantes con traza)
@@ -264,7 +264,7 @@ Tasks are marked as completed when they reflect the current repository state, an
   - [x] 25.1 Definir API de port: `rx_tick_t`, `rx_tick_now/add_us/compare/sleep_until`,
     `rx_mutex_t`, `rx_thread_t`, `rx_barrier_t` y sus operaciones
   - [x] 25.2 Implementar `port/posix.h` — POSIX (Linux/macOS)
-    - `clock_gettime(CLOCK_MONOTONIC)`, `pthread_mutex_t`, trampoline para `pthread_create`
+    - `clock_gettime(CLOCK_MONOTONIC)`, `pthread_mutex_t`, `pthread_create`, intento de FIFO con `pthread_setschedparam`
     - Barrera generacional con `pthread_mutex_t` + `pthread_cond_t`
   - [x] 25.3 Implementar `port/freertos.h` — FreeRTOS/ESP-IDF
     - `esp_timer_get_time() × 1000` ns, `SemaphoreHandle_t`, `TaskHandle_t`

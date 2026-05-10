@@ -5,29 +5,28 @@
  * FSM 03-mix — parallel thread-per-node scheduler (BSP barriers).
  *
  * One runtime holds all four nodes, each with its own period.
- * rx_par_exec gives each node its own pthread; two barriers per
- * hyperperiod slot synchronise the reactive-synchronous phases:
+ * rx_thread_exec gives each periodic node its own thread; two barriers per
+ * live activation group synchronise the reactive-synchronous phases:
  *
- *   latch_b[s]:  all active nodes latch inputs in parallel, then evaluate.
- *   commit_b[s]: all active nodes commit outputs in parallel.
+ *   eval_b:   all active nodes latch inputs in parallel, then evaluate.
+ *   commit_b: all active nodes commit and dispatch deferred actions before dump.
  *
  *   light_a  10 ms  → thread
  *   blink_b  10 ms  → thread
  *   auto_c   20 ms  → thread
  *   cli      10 ms  → main thread (added last)
  *
- *   runtime base = GCD(10,10,20,10) = 10 ms → 2 slots
- *   slot 0 (t=0,20,40,...): light_a + blink_b + auto_c + cli  barrier(4)
- *   slot 1 (t=10,30,50,...): light_a + blink_b + cli           barrier(3)
+ *   t=0,20,40,...:  light_a + blink_b + auto_c + cli  barrier(4)
+ *   t=10,30,50,...: light_a + blink_b + cli           barrier(3)
  *
  * Contrast with main_cyclic.c (cyclic executive):
  *   - Cyclic exec: one thread, sequential nodes per slot.
- *   - par_exec: one thread per node; latch, evaluate, and commit run in
+ *   - thread exec: one thread per node; latch, evaluate, commit, and dump run in
  *     parallel across co-active nodes, synchronised by barriers.
  *
  * Contrast with main_coop.c:
  *   - Coop exec: one thread, dynamic deadline scheduling.
- *   - par_exec: true parallelism (multiple CPUs); each node has its own
+ *   - thread exec: true parallelism (multiple CPUs); each node has its own
  *     rx_context (no shared deferred queue).
  *
  * Build:

@@ -138,25 +138,56 @@ static inline void rx_mutex_unlock(rx_mutex_t *m)
 /* ── thread ─────────────────────────────────────────────────────────── */
 
 typedef struct k_thread rx_thread_t;
+typedef void *(*rx_thread_fn)(void *arg);
+
+static void _rxnet_zephyr_thread_entry(void *arg, void *unused1, void *unused2)
+{
+    rx_thread_fn fn = ((rx_thread_fn *)arg)[0];
+    void *user = ((void **)arg)[1];
+    (void)unused1;
+    (void)unused2;
+    (void)fn(user);
+}
 
 static inline int rx_thread_create(rx_thread_t *t,
-                                   void (*fn)(void *), void *arg)
+                                   rx_thread_fn fn, void *arg)
 {
     unsigned int idx = _rxnet_zephyr_thread_idx++;
+    static void *args[RXNET_ZEPHYR_MAX_THREADS][2];
     if (idx >= RXNET_ZEPHYR_MAX_THREADS) return -1;
+    args[idx][0] = (void *)fn;
+    args[idx][1] = arg;
 
     k_tid_t tid = k_thread_create(
         t,
         _rxnet_zephyr_stacks[idx],
         RXNET_ZEPHYR_STACK_SIZE,
-        (k_thread_entry_t)fn,
-        arg, NULL, NULL,
+        _rxnet_zephyr_thread_entry,
+        args[idx], NULL, NULL,
         RXNET_ZEPHYR_THREAD_PRIORITY,
         0,
         K_NO_WAIT
     );
 
     return (tid != NULL) ? 0 : -1;
+}
+
+#define RXNET_THREAD_FIFO_AVAILABLE 1
+
+static inline int rx_thread_configure_fifo(rx_thread_t *t,
+                                           int priority_rank,
+                                           int ranks)
+{
+    if (ranks < 1 || priority_rank < 0 || priority_rank >= ranks) return -1;
+    k_thread_priority_set(t, RXNET_ZEPHYR_THREAD_PRIORITY + priority_rank);
+    return 0;
+}
+
+static inline int rx_thread_configure_current_fifo(int priority_rank, int ranks)
+{
+    if (ranks < 1 || priority_rank < 0 || priority_rank >= ranks) return -1;
+    k_thread_priority_set(k_current_get(), RXNET_ZEPHYR_THREAD_PRIORITY + priority_rank);
+    return 0;
 }
 
 /* ── barrier (generation-based via k_mutex + k_condvar) ─────────────── */
@@ -177,6 +208,15 @@ static inline int rx_barrier_init(rx_barrier_t *b, unsigned int count)
     k_mutex_init(&b->mutex);
     k_condvar_init(&b->cond);
     return 0;
+}
+
+static inline void rx_barrier_reset(rx_barrier_t *b, unsigned int count)
+{
+    k_mutex_lock(&b->mutex, K_FOREVER);
+    b->waiting = 0;
+    b->total = count;
+    b->generation = 0;
+    k_mutex_unlock(&b->mutex);
 }
 
 static inline void rx_barrier_wait(rx_barrier_t *b)

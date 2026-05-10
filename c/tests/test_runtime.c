@@ -3,6 +3,7 @@
 
 #include "rxtest.h"
 #include "rxnet/runtime.h"
+#include "rxnet/thread.h"
 
 #include <stddef.h>
 
@@ -290,6 +291,60 @@ static void tick_calls_all_phases_on_registered_node(void) {
     ASSERT_EQ(1, tn.dump_calls);
 }
 
+static void tick_nodes_runs_only_selected_active_group(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    test_node a, b, c;
+    unsigned char active[] = {1, 2};
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 3);
+    test_node_init(&a);
+    test_node_init(&b);
+    test_node_init(&c);
+
+    rx_runtime_add_node(&rt, &a.node, 10000, 0);
+    rx_runtime_add_node(&rt, &b.node, 10000, 0);
+    rx_runtime_add_node(&rt, &c.node, 20000, 0);
+
+    ASSERT_EQ(0, rx_runtime_tick_nodes(&rt, active, 2));
+
+    ASSERT_EQ(0, a.latch_calls);
+    ASSERT_EQ(0, a.eval_calls);
+    ASSERT_EQ(0, a.commit_calls);
+    ASSERT_EQ(0, a.dump_calls);
+
+    ASSERT_EQ(1, b.latch_calls);
+    ASSERT_EQ(1, b.eval_calls);
+    ASSERT_EQ(1, b.commit_calls);
+    ASSERT_EQ(1, b.dump_calls);
+
+    ASSERT_EQ(1, c.latch_calls);
+    ASSERT_EQ(1, c.eval_calls);
+    ASSERT_EQ(1, c.commit_calls);
+    ASSERT_EQ(1, c.dump_calls);
+}
+
+static void tick_nodes_updates_wcet_for_selected_nodes_only(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    test_node a, b;
+    unsigned char active[] = {1};
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 2);
+    test_node_init(&a);
+    test_node_init(&b);
+
+    rx_runtime_add_node(&rt, &a.node, 10000, 0);
+    rx_runtime_add_node(&rt, &b.node, 10000, 0);
+
+    ASSERT_EQ(0, rx_runtime_tick_nodes(&rt, active, 1));
+
+    ASSERT_EQ(0, rt.nodes[0].wcet_us);
+    ASSERT_TRUE(rt.nodes[1].wcet_us > 0);
+}
+
 /*
  * Phase order for a single node must be:
  *   latch(0) → evaluate(1) → commit(2) → [deferred actions] → dump(3)
@@ -367,6 +422,67 @@ static void runtime_free_null_is_safe(void) {
 
 static void runtime_destroy_null_is_safe(void) {
     rx_runtime_destroy(NULL); /* must not crash */
+}
+
+static void runtime_build_does_not_materialize_activation_table(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    test_node fast, slow;
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 2);
+    test_node_init(&fast);
+    test_node_init(&slow);
+
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &fast.node, 10000, 0));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &slow.node, 20000, 0));
+    ASSERT_EQ(0, rx_runtime_build(&rt));
+
+    ASSERT_EQ(10000, rt.period_us);
+    ASSERT_EQ(0, rt.nslots);
+}
+
+static void thread_sched_check_uses_response_time_analysis(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    rx_thread_exec te;
+    rx_sched_report report;
+    test_node fast, slow;
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 2);
+    test_node_init(&fast);
+    test_node_init(&slow);
+
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &fast.node, 10000, 5000));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &slow.node, 20000, 20000));
+    rt.nodes[0].wcet_us = 1000;
+    rt.nodes[1].wcet_us = 2000;
+
+    rx_thread_exec_init(&te);
+    ASSERT_EQ(0, rx_thread_exec_add(&te, &rt));
+    ASSERT_EQ(RX_SCHED_SCHEDULABLE,
+              rx_thread_exec_check_schedulability(&te, &report, NULL));
+    ASSERT_EQ(1, report.schedulable);
+    ASSERT_EQ(2, report.task_count);
+    ASSERT_EQ(0, report.tasks[0].node_idx);
+    ASSERT_EQ(1, report.tasks[1].node_idx);
+    ASSERT_EQ(3000, report.tasks[1].response_us);
+}
+
+static void thread_exec_rejects_async_nodes(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    rx_thread_exec te;
+    test_node async;
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 1);
+    test_node_init(&async);
+
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &async.node, 0, 0));
+    rx_thread_exec_init(&te);
+    ASSERT_EQ(-1, rx_thread_exec_add(&te, &rt));
 }
 
 /* ------------------------------------------------------------------ */
@@ -481,10 +597,15 @@ int main(void) {
     RUN_TEST(runtime_add_node_beyond_capacity_returns_error);
     RUN_TEST(runtime_free_null_is_safe);
     RUN_TEST(runtime_destroy_null_is_safe);
+    RUN_TEST(runtime_build_does_not_materialize_activation_table);
+    RUN_TEST(thread_sched_check_uses_response_time_analysis);
+    RUN_TEST(thread_exec_rejects_async_nodes);
 
     TEST_SUITE("tick execution");
     RUN_TEST(tick_rejects_null_runtime);
     RUN_TEST(tick_calls_all_phases_on_registered_node);
+    RUN_TEST(tick_nodes_runs_only_selected_active_group);
+    RUN_TEST(tick_nodes_updates_wcet_for_selected_nodes_only);
     RUN_TEST(tick_phases_execute_in_correct_order);
     RUN_TEST(tick_deferred_actions_run_after_all_commits);
 

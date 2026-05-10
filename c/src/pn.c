@@ -92,6 +92,9 @@ static void rx_pn_net_evaluate(rx_node *node, rx_context *ctx) {
         }
 
         net->fire_flags[t] = 1;
+        if (transition->action != NULL) {
+            rx_context_enqueue_deferred_action(ctx, transition->action, net->user);
+        }
         /* Apply delta immediately so subsequent transitions see the updated
          * token counts. This implements greedy sequential semantics: earlier
          * transitions in declaration order have priority over later ones. */
@@ -102,9 +105,10 @@ static void rx_pn_net_evaluate(rx_node *node, rx_context *ctx) {
 static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
     rx_pn_net *net = (rx_pn_net *)node;
     size_t t;
+    (void)ctx;
 
     /* Token deltas were already applied to next_places during evaluate.
-     * Commit the result and enqueue deferred actions for transitions that fired. */
+     * Commit publishes the result after all active nodes have evaluated. */
     memcpy(net->places, net->next_places, net->place_count * sizeof(int));
 
     for (t = 0; t < net->transition_count; ++t) {
@@ -112,9 +116,6 @@ static void rx_pn_net_commit(rx_node *node, rx_context *ctx) {
             continue;
         }
         RX_TRACE_PN(node, (uint16_t)t);
-        if (net->transitions[t].action != NULL) {
-            rx_context_enqueue_deferred_action(ctx, net->transitions[t].action, net->user);
-        }
     }
 }
 

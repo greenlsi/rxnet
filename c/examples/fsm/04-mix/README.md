@@ -15,22 +15,22 @@ The same scenario is implemented in **three execution models**:
 | `main_threads.c` | `rx_thread_exec` — one thread per node, BSP barriers | 4 | A,B 10 ms / C 20 ms / CLI 10 ms |
 
 All three use **one runtime** with periods registered per machine.
-The runtime builds the hyperperiod table (base = GCD = 10 ms, 2 slots) automatically.
+The cyclic executive builds the hyperperiod table (base = GCD = 10 ms, 2 slots) automatically.
 
 ### Thread model
 
-`rx_thread_exec` gives each node its own pthread and its own `rx_context`
-(no shared deferred queue).  Two barriers per hyperperiod slot enforce the
+`rx_thread_exec` gives each periodic node its own thread and its own `rx_context`
+(no shared deferred queue).  Two barriers per live activation group enforce the
 reactive-synchronous guarantee:
 
-- **latch_b[s]**: all nodes active in slot s arrive → latch inputs in parallel → evaluate in parallel.
-- **commit_b[s]**: all evaluations done → commit outputs in parallel.
+- **eval_b**: all active nodes have latched and evaluated.
+- **commit_b**: all active nodes have committed and dispatched deferred actions before dump.
 
 The CLI node is added last and runs in the main thread (stdin access).
 
 ```
-slot 0 (t = 0, 20, 40, …): light_a + blink_b + auto_c + cli  → barrier(4)
-slot 1 (t = 10, 30, 50, …): light_a + blink_b + cli           → barrier(3)
+t = 0, 20, 40, …:  light_a + blink_b + auto_c + cli  → barrier(4)
+t = 10, 30, 50, …: light_a + blink_b + cli           → barrier(3)
 ```
 
 Because all nodes share a barrier before evaluating, light_a and blink_b are

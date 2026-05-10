@@ -4,11 +4,11 @@
 /*
  * PN 03-mix — cooperative (single-thread) multi-rate scheduler.
  *
- * Each net (and the CLI machine) carries its own period; each runtime
- * builds its hyperperiod dispatch table automatically:
+ * Each net (and the CLI machine) carries its own period; rx_coop_exec
+ * tracks the next activation instant for every periodic node:
  *
  *   pn_rt:  light_a 10 ms, blink_b 10 ms, auto_c 20 ms  [rx_pn_runtime]
- *             base = GCD(10,10,20) = 10 ms, hyper = 20 ms → 2 slots
+ *             next activations at 10 ms / 20 ms periods
  *   cli_rt: cli     10 ms                                 [rx_fsm_runtime]
  *
  * rx_coop_exec runs whichever runtime is due, then sleeps until the

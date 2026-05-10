@@ -5,13 +5,15 @@ It supports two model families — **FSM** and **Petri Net** — that share one 
 
 ## Tick phases (per cycle)
 
-1. **Latch inputs** — each node snapshots its inputs
-2. **Evaluate** — compute next state / fire transitions (read-only on latched snapshot)
-3. **Commit** — publish new state; enqueue deferred actions
-4. **Run deferred actions** — callbacks fire after all commits are visible
-5. **Dump outputs** — each node writes its outputs to hardware or downstream
+1. **Latch** — each active node snapshots its inputs
+2. **Evaluate** — compute next state / fire transitions and enqueue deferred actions
+3. **Commit** — publish new state and dispatch deferred actions after all active commits
+4. **Dump** — each active node writes its outputs to hardware or downstream
 
-All nodes in a tick observe a consistent snapshot.  Guards in phase 2 never see a half-committed state.
+Each activation group has two barriers: after `evaluate`, and after `commit`
+plus deferred-action dispatch.  All nodes in the group observe a consistent
+snapshot.  Guards in phase 2 never see a half-committed state, and dumps only
+run after every active node has committed.
 
 ## When to use FSM vs Petri Net
 
@@ -46,8 +48,8 @@ CFLAGS="-std=c99 -O2 -Iinclude" make
 
 ## Multi-rate scheduling
 
-Periods are registered **per node**, not per runtime.  The runtime builds a
-hyperperiod dispatch table automatically:
+Periods are registered **per node**, not per runtime.  The runtime stores the
+scheduling parameters; each executor owns the scheduling structure it needs:
 
 ```c
 rx_fsm_runtime_add_machine(&rt, &light_a, 10000, 0);  /* 10 ms */
@@ -58,12 +60,17 @@ rx_fsm_runtime_add_machine(&rt, &auto_c,  20000, 0);  /* 20 ms */
    slot 1: light_a + blink_b              */
 ```
 
-Nodes with `period_us = 0` are async: they run every base tick but advance only when their own guards fire.
+The cyclic executive materialises this hyperperiod table.  The cooperative and
+threaded executors do not: they track the next activation instant for each
+periodic node and order ready work by effective deadline.
+
+Nodes with `period_us = 0` are async: executors include them when they service
+their runtime, but the node advances only when its own guards fire.
 
 ## Executors
 
-Three executors are provided.  All read `rt->period_us` (set by the runtime
-build step) and handle timing internally.
+Three executors are provided.  They read per-node scheduling parameters from the
+runtime and handle timing internally.
 
 ### `rx_cyclic_exec` — cyclic executive
 
@@ -79,9 +86,9 @@ rx_cyclic_exec_run(&ce); /* returns after rx_cyclic_exec_stop(&ce) */
 
 ### `rx_coop_exec` — cooperative multi-rate
 
-Dynamic deadline scheduling: runs whichever runtime is due, then sleeps until
-the nearest next deadline.  Single thread — no mutexes needed, suitable for
-cooperative RTOS patterns.
+Dynamic deadline scheduling: runs the nodes whose next activation is due, in
+deadline order, then sleeps until the nearest next activation.  Single thread —
+no mutexes needed, suitable for cooperative RTOS patterns.
 
 ```c
 rx_coop_exec ce;
@@ -94,14 +101,18 @@ Multiple runtimes can be registered; the scheduler picks the earliest deadline a
 
 ### `rx_thread_exec` — parallel thread-per-node (BSP barriers)
 
-One pthread per node.  Two barriers per hyperperiod slot enforce the
-reactive-synchronous guarantee with true parallelism:
+One thread per periodic node.  Activation groups are created inside the executor
+for absolute activation instants, so no hyperperiod table is stored.  Two
+barriers per live activation group enforce the reactive-synchronous guarantee
+with true parallelism:
 
-- **latch_b[s]**: all nodes active in slot s arrive → latch inputs in parallel → evaluate in parallel.
-- **commit_b[s]**: all evaluations done → commit outputs in parallel.
+- **eval_b**: all active nodes have latched and evaluated.
+- **commit_b**: all active nodes have committed and dispatched deferred actions.
 
 Each node gets its own `rx_context` (no shared deferred queue).
-The last node of the last runtime runs in the calling (main) thread.
+The last node of the last runtime runs in the calling (main) thread.  Async
+nodes (`period_us = 0`) are not accepted by `rx_thread_exec`: a single async
+thread cannot safely participate in multiple overlapping activation groups.
 
 ```c
 rx_thread_exec te;
@@ -214,8 +225,11 @@ Each port defines these types and inline functions:
 | `rx_mutex_init/lock/unlock` | Mutex operations |
 | `rx_thread_t` | Thread handle |
 | `rx_thread_create(t, fn, arg)` | Spawn a thread |
+| `rx_thread_configure_fifo(t, rank, ranks)` | Try fixed-priority FIFO scheduling |
+| `rx_thread_configure_current_fifo(rank, ranks)` | Try FIFO for the calling thread |
 | `rx_barrier_t` | Reusable generation barrier |
 | `rx_barrier_init(b, n)` | Initialise barrier for n threads |
+| `rx_barrier_reset(b, n)` | Reuse a barrier for a new participant count |
 | `rx_barrier_wait(b)` | Wait until all n threads arrive |
 
 The trace subsystem hooks (`RX_TRACE_NOW_NS`, `RX_TRACE_LOCK_*`) are also set

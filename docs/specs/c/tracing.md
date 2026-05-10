@@ -437,16 +437,12 @@ Phase IDs: 0=latch, 1=evaluate, 2=commit, 3=dump.
 The `rx_runtime_tick()` function calls the macros at the natural boundaries:
 
 ```c
-void rx_runtime_tick(rx_runtime_t *rt) {
-    uint8_t slot   = rt->current_slot;
-    uint8_t active = rt->slot_sizes[slot];
-
-    RX_TRACE_TICK_START(rt, slot, active);
+void rx_runtime_tick_nodes(rx_runtime_t *rt, uint8_t *active, uint8_t count) {
+    RX_TRACE_TICK_START(rt, 0, count);
 
     /* Phase 1: latch inputs */
-    rx_context_latch(rt->ctx);
-    for (uint8_t i = 0; i < active; i++) {
-        rx_node *n = rt->slots[slot][i];
+    for (uint8_t i = 0; i < count; i++) {
+        rx_node *n = rt->nodes[active[i]].node;
         RX_TRACE_NODE_START(rt, i);
         RX_TRACE_PHASE_START(rt, i, RX_PHASE_LATCH);
         if (n->vtable->latch_inputs) n->vtable->latch_inputs(n, rt->ctx);
@@ -454,15 +450,15 @@ void rx_runtime_tick(rx_runtime_t *rt) {
     }
     /* ... evaluate, commit, dump analogously ... */
 
-    for (uint8_t i = 0; i < active; i++) {
-        rx_node *n = rt->slots[slot][i];
+    rx_context_dispatch_deferred(rt->ctx);
+
+    for (uint8_t i = 0; i < count; i++) {
+        rx_node *n = rt->nodes[active[i]].node;
         RX_TRACE_PHASE_START(rt, i, RX_PHASE_DUMP);
         if (n->vtable->dump_outputs) n->vtable->dump_outputs(n, rt->ctx);
         RX_TRACE_PHASE_END(rt, i, RX_PHASE_DUMP);
         RX_TRACE_NODE_END(rt, i);
     }
-
-    rt->current_slot = (rt->current_slot + 1) % rt->nslots;
 }
 ```
 

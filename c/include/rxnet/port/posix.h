@@ -29,8 +29,8 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <time.h>
 
 #ifdef __cplusplus
@@ -80,7 +80,16 @@ typedef pthread_mutex_t rx_mutex_t;
 
 static inline void rx_mutex_init(rx_mutex_t *m)
 {
-    pthread_mutex_init(m, NULL);
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) == 0) {
+#ifdef PTHREAD_PRIO_INHERIT
+        (void)pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT);
+#endif
+        pthread_mutex_init(m, &attr);
+        pthread_mutexattr_destroy(&attr);
+    } else {
+        pthread_mutex_init(m, NULL);
+    }
 }
 
 static inline void rx_mutex_lock(rx_mutex_t *m)
@@ -96,36 +105,36 @@ static inline void rx_mutex_unlock(rx_mutex_t *m)
 /* ── thread ─────────────────────────────────────────────────────────── */
 
 typedef pthread_t rx_thread_t;
-
-/* pthread_create requires void *(*)(void *), but rxnet uses void (*)(void *)
- * for cross-platform compatibility (FreeRTOS/Zephyr tasks return void).
- * The trampoline below adapts the signatures without a function-pointer cast.
- * The arg struct is heap-allocated and freed by the trampoline after the
- * thread function returns (which never happens in rxnet's infinite loops, but
- * it is correct to pair malloc/free for static analysis tools). */
-typedef struct { void (*fn)(void *); void *arg; } _rx_posix_thread_args_t;
-
-static inline void *_rx_posix_thread_trampoline(void *p)
-{
-    _rx_posix_thread_args_t a = *(_rx_posix_thread_args_t *)p;
-    free(p);
-    a.fn(a.arg);
-    return NULL;
-}
+typedef void *(*rx_thread_fn)(void *arg);
 
 static inline int rx_thread_create(rx_thread_t *t,
-                                   void (*fn)(void *), void *arg)
+                                   rx_thread_fn fn, void *arg)
 {
-    _rx_posix_thread_args_t *a =
-        (_rx_posix_thread_args_t *)malloc(sizeof(_rx_posix_thread_args_t));
-    if (!a) return -1;
-    a->fn  = fn;
-    a->arg = arg;
-    if (pthread_create(t, NULL, _rx_posix_thread_trampoline, a) != 0) {
-        free(a);
-        return -1;
-    }
-    return 0;
+    return (pthread_create(t, NULL, fn, arg) == 0) ? 0 : -1;
+}
+
+#define RXNET_THREAD_FIFO_AVAILABLE 1
+
+static inline int rx_thread_configure_fifo(rx_thread_t *t,
+                                           int priority_rank,
+                                           int ranks)
+{
+    int min_prio = sched_get_priority_min(SCHED_FIFO);
+    int max_prio = sched_get_priority_max(SCHED_FIFO);
+    struct sched_param sp;
+
+    if (min_prio < 0 || max_prio < 0) return -1;
+    if (ranks < 1 || priority_rank < 0 || priority_rank >= ranks) return -1;
+    if (ranks > (max_prio - min_prio + 1)) return -1;
+
+    sp.sched_priority = max_prio - priority_rank;
+    return (pthread_setschedparam(*t, SCHED_FIFO, &sp) == 0) ? 0 : -1;
+}
+
+static inline int rx_thread_configure_current_fifo(int priority_rank, int ranks)
+{
+    rx_thread_t self = pthread_self();
+    return rx_thread_configure_fifo(&self, priority_rank, ranks);
 }
 
 /* ── barrier (generation-based, reusable) ───────────────────────────── */
@@ -149,6 +158,15 @@ static inline int rx_barrier_init(rx_barrier_t *b, unsigned int count)
         return -1;
     }
     return 0;
+}
+
+static inline void rx_barrier_reset(rx_barrier_t *b, unsigned int count)
+{
+    pthread_mutex_lock(&b->mutex);
+    b->waiting = 0;
+    b->total = count;
+    b->generation = 0;
+    pthread_mutex_unlock(&b->mutex);
 }
 
 static inline void rx_barrier_wait(rx_barrier_t *b)

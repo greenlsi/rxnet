@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "rxnet/port.h"
 #include "rxnet/runtime.h"
 #include "rxnet/trace.h"
 
@@ -22,12 +23,6 @@ gcd(long a, long b)
 {
     while (b) { long t = b; b = a % b; a = t; }
     return a;
-}
-
-static long
-lcm(long a, long b)
-{
-    return a / gcd(a, b) * b;
 }
 
 /* ------------------------------------------------------------------ */
@@ -248,71 +243,39 @@ int rx_runtime_add_node(rx_runtime *rt, rx_node *node,
     rt->nodes[rt->node_count].node        = node;
     rt->nodes[rt->node_count].period_us   = period_us;
     rt->nodes[rt->node_count].deadline_us = deadline_us;
+    rt->nodes[rt->node_count].wcet_us     = 0;
     rt->node_count++;
 
-    /* Invalidate any previously built slot table. */
+    /* Invalidate any previously computed scheduling metadata. */
+    rt->period_us = 0;
     rt->nslots = 0;
+    rt->current_slot = 0;
     return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/* rx_runtime_build — hyperperiod slot table                            */
+/* rx_runtime_build — scheduling metadata                               */
 /* ------------------------------------------------------------------ */
-
-/*
- * Stable insertion sort ascending by effective deadline for the first
- * `count` entries in slot->node_idx.  All entries are periodic nodes.
- * Effective deadline = deadline_us if > 0, else period_us.
- */
-static void sort_slot_by_deadline(rx_runtime_slot *slot, int count,
-                                  const rx_node_entry *nodes)
-{
-    int i, j;
-    unsigned char tmp;
-    long dl_i, dl_j;
-
-    for (i = 1; i < count; ++i) {
-        tmp  = slot->node_idx[i];
-        dl_i = nodes[tmp].deadline_us > 0
-               ? nodes[tmp].deadline_us : nodes[tmp].period_us;
-        j = i;
-        while (j > 0) {
-            unsigned char prev = slot->node_idx[j - 1];
-            dl_j = nodes[prev].deadline_us > 0
-                   ? nodes[prev].deadline_us : nodes[prev].period_us;
-            if (dl_j <= dl_i) break;
-            slot->node_idx[j] = slot->node_idx[j - 1];
-            --j;
-        }
-        slot->node_idx[j] = tmp;
-    }
-}
 
 int rx_runtime_build(rx_runtime *rt)
 {
     size_t i;
-    int    s, nslots;
-    long   base_us = 0, hyper_us = 0;
+    long   base_us = 0;
 
     if (rt == NULL || rt->node_count == 0) {
         return -1;
     }
 
-    /* Compute base tick (GCD) and hyperperiod (LCM) from periodic nodes. */
+    /* Compute base tick (GCD) from periodic nodes. */
     for (i = 0; i < rt->node_count; ++i) {
         long p = rt->nodes[i].period_us;
         if (p <= 0) continue; /* async node — skip */
         if (base_us == 0) {
-            base_us  = p;
-            hyper_us = p;
+            base_us = p;
         } else {
-            base_us  = gcd(base_us, p);
-            hyper_us = lcm(hyper_us, p);
+            base_us = gcd(base_us, p);
         }
     }
-
-    /* If all nodes are async, one slot covers everything. */
-    nslots = (base_us == 0) ? 1 : (int)(hyper_us / base_us);
 
     /* Schedulability checks. */
     for (i = 0; i < rt->node_count; ++i) {
@@ -326,41 +289,9 @@ int rx_runtime_build(rx_runtime *rt)
             return -1;
         }
     }
-    if (nslots > (int)RXNET_MAX_RUNTIME_SLOTS) {
-        fprintf(stderr,
-                "rxnet: hyperperiod requires %d slots, limit is %u; "
-                "increase RXNET_MAX_RUNTIME_SLOTS\n",
-                nslots, RXNET_MAX_RUNTIME_SLOTS);
-        return -1;
-    }
-
-    /* Build per-slot activation lists. */
-    for (s = 0; s < nslots; ++s) {
-        int periodic_count = 0;
-
-        /* 1. Periodic nodes active in this slot. */
-        for (i = 0; i < rt->node_count; ++i) {
-            long p = rt->nodes[i].period_us;
-            if (p > 0 && ((long)s * base_us) % p == 0) {
-                rt->slots_storage[s].node_idx[periodic_count++] = (unsigned char)i;
-            }
-        }
-        rt->slots_storage[s].count = periodic_count;
-
-        /* 2. Sort periodic nodes by effective deadline (EDF, ascending). */
-        sort_slot_by_deadline(&rt->slots_storage[s], periodic_count, rt->nodes);
-
-        /* 3. Async nodes (period_us == 0) always run; append after periodic. */
-        for (i = 0; i < rt->node_count; ++i) {
-            if (rt->nodes[i].period_us == 0) {
-                rt->slots_storage[s].node_idx[rt->slots_storage[s].count++] =
-                    (unsigned char)i;
-            }
-        }
-    }
 
     rt->period_us    = base_us;
-    rt->nslots       = nslots;
+    rt->nslots       = 0;
     rt->current_slot = 0;
     return 0;
 }
@@ -386,80 +317,79 @@ void rx_node_set_dump_outputs_callback(rx_node *node, rx_node_phase_fn cb) {
 }
 
 /* ------------------------------------------------------------------ */
-/* rx_tick                                                              */
+/* Tick execution                                                       */
 /* ------------------------------------------------------------------ */
 
+int rx_runtime_tick_nodes(rx_runtime *rt,
+                          const unsigned char *node_idx,
+                          int count) {
+    int i;
+    rx_tick_t started_at[RXNET_MAX_RUNTIME_NODES];
+    if (rt == NULL || rt->ctx == NULL) {
+        return -1;
+    }
+    if (count < 0 || (count > 0 && node_idx == NULL)) {
+        return -1;
+    }
+    for (i = 0; i < count; ++i) {
+        if ((size_t)node_idx[i] >= rt->node_count) {
+            return -1;
+        }
+    }
+
+    for (i = 0; i < count; ++i) {
+        rx_node *node = rt->nodes[node_idx[i]].node;
+        started_at[i] = rx_tick_now();
+        RX_TRACE_NODE_START(node);
+        RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
+        node->vtable->latch_inputs(node, rt->ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
+    }
+    for (i = 0; i < count; ++i) {
+        rx_node *node = rt->nodes[node_idx[i]].node;
+        RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
+        node->vtable->evaluate(node, rt->ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
+    }
+    for (i = 0; i < count; ++i) {
+        rx_node *node = rt->nodes[node_idx[i]].node;
+        RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
+        node->vtable->commit(node, rt->ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
+    }
+    rx_context_dispatch_deferred(rt->ctx);
+    for (i = 0; i < count; ++i) {
+        rx_node *node = rt->nodes[node_idx[i]].node;
+        rx_tick_t finished_at;
+        long elapsed_us;
+        RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
+        node->vtable->dump_outputs(node, rt->ctx);
+        RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
+        RX_TRACE_NODE_END(node);
+        finished_at = rx_tick_now();
+        elapsed_us = (long)((finished_at - started_at[i] + 999) / 1000);
+        if (elapsed_us <= 0) {
+            elapsed_us = 1;
+        }
+        if (elapsed_us > rt->nodes[node_idx[i]].wcet_us) {
+            rt->nodes[node_idx[i]].wcet_us = elapsed_us;
+        }
+    }
+
+    return 0;
+}
+
 int rx_tick(rx_runtime *rt) {
+    unsigned char node_idx[RXNET_MAX_RUNTIME_NODES];
     size_t i;
 
     if (rt == NULL || rt->ctx == NULL) {
         return -1;
     }
 
-    if (rt->nslots == 0) {
-        /* Unscheduled / manual-tick mode: run all nodes. */
-        for (i = 0; i < rt->node_count; ++i) {
-            rx_node *node = rt->nodes[i].node;
-            RX_TRACE_NODE_START(node);
-            RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
-            node->vtable->latch_inputs(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
-        }
-        for (i = 0; i < rt->node_count; ++i) {
-            rx_node *node = rt->nodes[i].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
-            node->vtable->evaluate(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
-        }
-        for (i = 0; i < rt->node_count; ++i) {
-            rx_node *node = rt->nodes[i].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
-            node->vtable->commit(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
-        }
-        rx_context_dispatch_deferred(rt->ctx);
-        for (i = 0; i < rt->node_count; ++i) {
-            rx_node *node = rt->nodes[i].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
-            node->vtable->dump_outputs(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
-            RX_TRACE_NODE_END(node);
-        }
-
-    } else {
-        /* Scheduled mode: run only active nodes for the current slot, EDF order. */
-        const rx_runtime_slot *slot = &rt->slots_storage[rt->current_slot];
-        size_t j;
-
-        for (j = 0; j < (size_t)slot->count; ++j) {
-            rx_node *node = rt->nodes[slot->node_idx[j]].node;
-            RX_TRACE_NODE_START(node);
-            RX_TRACE_PH_START(node, RX_TRACE_PH_LATCH);
-            node->vtable->latch_inputs(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_LATCH);
-        }
-        for (j = 0; j < (size_t)slot->count; ++j) {
-            rx_node *node = rt->nodes[slot->node_idx[j]].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_EVAL);
-            node->vtable->evaluate(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_EVAL);
-        }
-        for (j = 0; j < (size_t)slot->count; ++j) {
-            rx_node *node = rt->nodes[slot->node_idx[j]].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_COMMIT);
-            node->vtable->commit(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_COMMIT);
-        }
-        rx_context_dispatch_deferred(rt->ctx);
-        for (j = 0; j < (size_t)slot->count; ++j) {
-            rx_node *node = rt->nodes[slot->node_idx[j]].node;
-            RX_TRACE_PH_START(node, RX_TRACE_PH_DUMP);
-            node->vtable->dump_outputs(node, rt->ctx);
-            RX_TRACE_PH_END(node, RX_TRACE_PH_DUMP);
-            RX_TRACE_NODE_END(node);
-        }
-        rt->current_slot = (rt->current_slot + 1) % rt->nslots;
+    for (i = 0; i < rt->node_count; ++i) {
+        node_idx[i] = (unsigned char)i;
     }
 
-    return 0;
+    return rx_runtime_tick_nodes(rt, node_idx, (int)rt->node_count);
 }

@@ -20,7 +20,7 @@ The goal of this document is to capture what the C library provides today, so fu
 - **PN_Net**: Petri net node with places, transitions, and firing flags
 - **PN_Transition**: Petri transition with consume/produce arcs, optional guard/action
 - **Arc**: Petri arc with `place_id` and `weight`
-- **Tick**: One complete synchronous cycle: latch -> evaluate -> commit -> deferred actions
+- **Tick**: One complete synchronous cycle: latch -> evaluate -> commit -> dump
 - **Latched_Inputs**: Immutable snapshot of current inputs used during one tick
 - **Config_Header**: Compile-time configuration header (`rxnet/config.h`) that defines fixed runtime capacities
 
@@ -35,8 +35,9 @@ The goal of this document is to capture what the C library provides today, so fu
 1. WHEN a tick starts, THE Core_Runtime SHALL latch input data before node evaluation
 2. WHEN latching completes, THE Core_Runtime SHALL evaluate all registered nodes
 3. WHEN evaluation completes, THE Core_Runtime SHALL commit all registered nodes
-4. WHEN commit completes, THE Core_Runtime SHALL execute deferred actions and clear the queue
-5. THE Tick order SHALL remain `latch -> evaluate -> commit -> deferred actions` in the C implementation
+4. WHEN all active nodes have committed, THE Core_Runtime SHALL execute deferred actions and clear the queue before dump
+5. WHEN deferred action dispatch completes, THE Core_Runtime SHALL dump outputs for all active nodes
+6. THE Tick order SHALL remain `latch -> evaluate -> commit -> dump` in the C implementation, with deferred action dispatch between commit and dump
 
 ### Requirement 2: Context and Input Snapshot Handling
 
@@ -55,8 +56,8 @@ The goal of this document is to capture what the C library provides today, so fu
 
 #### Acceptance Criteria
 
-1. WHEN a node commits with a proposed action, THE Context SHALL enqueue the action for deferred execution
-2. THE Core_Runtime SHALL run deferred actions only after all node commits in the tick
+1. WHEN a node evaluates a transition with an action, THE Context SHALL enqueue the action for deferred execution
+2. THE Core_Runtime SHALL run deferred actions only after all active node commits in the tick
 3. THE deferred action queue SHALL be cleared after execution
 4. THE deferred-action queue capacity SHALL be fixed at initialization from compile-time configuration (`rxnet/config.h`)
 5. WHEN enqueue parameters are invalid (`ctx` or function is null), THE API SHALL return an error code (`-1`)
@@ -84,7 +85,7 @@ The goal of this document is to capture what the C library provides today, so fu
 2. THE FSM evaluator SHALL scan transitions in declaration order and select the first transition whose `from_state` matches and whose guard is true (or absent)
 3. WHEN no transition matches, THE machine SHALL remain in the current state
 4. WHEN committing, THE machine SHALL update current state to `next_state`
-5. WHEN a transition action exists, THE action SHALL be enqueued as a deferred action (not executed inline during evaluate/commit)
+5. WHEN a transition action exists, THE action SHALL be enqueued as a deferred action during evaluate and executed only after all active nodes commit
 
 ### Requirement 6: FSM Shared Input Access
 
@@ -106,7 +107,7 @@ The goal of this document is to capture what the C library provides today, so fu
 2. THE PN evaluator SHALL mark a transition as fireable only if consume/produce arcs are valid and consume tokens are available
 3. WHEN a transition guard exists, THE transition SHALL fire only if the guard returns true
 4. WHEN committing, THE net SHALL apply consume/produce deltas for each fire-flagged transition
-5. WHEN a transition action exists, THE action SHALL be enqueued as a deferred action
+5. WHEN a transition action exists, THE action SHALL be enqueued as a deferred action during evaluate and executed only after all active nodes commit
 
 ### Requirement 8: PN Data Validation and Error Behavior
 
@@ -189,7 +190,7 @@ The goal of this document is to capture what the C library provides today, so fu
 3. THE library SHALL leave scheduling policy (tick frequency/loop ownership) to the host application
 4. THE library SHALL leave I/O side effects to user-defined action callbacks
 5. THE library SHALL support using one shared typed input structure across multiple model nodes in the same runtime context
-6. THE tick path (`latch`, `evaluate`, `commit`, `run deferred actions`) SHALL perform no heap allocation or reallocation
+6. THE tick path (`latch`, `evaluate`, `commit`, deferred action dispatch, `dump`) SHALL perform no heap allocation or reallocation
 7. THE fixed runtime capacities used by the tick path SHALL be configurable through `rxnet/config.h`
 
 ### Requirement 15: Concurrency Integration Patterns

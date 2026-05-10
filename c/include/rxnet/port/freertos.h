@@ -54,6 +54,8 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 
+#include "rxnet/config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -131,34 +133,71 @@ static inline void rx_mutex_unlock(rx_mutex_t *m)
 /* ── thread ─────────────────────────────────────────────────────────── */
 
 typedef TaskHandle_t rx_thread_t;
+typedef void *(*rx_thread_fn)(void *arg);
+
+static inline void _rxnet_freertos_thread_entry(void *arg)
+{
+    rx_thread_fn fn = ((rx_thread_fn *)arg)[0];
+    void *user = ((void **)arg)[1];
+    (void)fn(user);
+    vTaskDelete(NULL);
+}
 
 static inline int rx_thread_create(rx_thread_t *t,
-                                   void (*fn)(void *), void *arg)
+                                   rx_thread_fn fn, void *arg)
 {
     BaseType_t ret;
+    static void *args[RXNET_MAX_RUNTIME_NODES * RXNET_THREAD_MAX_RUNTIMES][2];
+    static unsigned int arg_idx;
+    unsigned int idx = arg_idx++;
+
+    if (idx >= RXNET_MAX_RUNTIME_NODES * RXNET_THREAD_MAX_RUNTIMES) return -1;
+    args[idx][0] = (void *)fn;
+    args[idx][1] = arg;
 
 #if RXNET_FREERTOS_CORE_ID >= 0
     ret = xTaskCreatePinnedToCore(
-        (TaskFunction_t)fn,
+        _rxnet_freertos_thread_entry,
         "rxnet",
         RXNET_FREERTOS_STACK_SIZE,
-        arg,
+        args[idx],
         RXNET_FREERTOS_TASK_PRIORITY,
         t,
         RXNET_FREERTOS_CORE_ID
     );
 #else
     ret = xTaskCreate(
-        (TaskFunction_t)fn,
+        _rxnet_freertos_thread_entry,
         "rxnet",
         RXNET_FREERTOS_STACK_SIZE,
-        arg,
+        args[idx],
         RXNET_FREERTOS_TASK_PRIORITY,
         t
     );
 #endif
 
     return (ret == pdPASS) ? 0 : -1;
+}
+
+#define RXNET_THREAD_FIFO_AVAILABLE 1
+
+static inline int rx_thread_configure_fifo(rx_thread_t *t,
+                                           int priority_rank,
+                                           int ranks)
+{
+    UBaseType_t max_prio = configMAX_PRIORITIES - 1;
+    UBaseType_t prio;
+    if (ranks < 1 || priority_rank < 0 || priority_rank >= ranks) return -1;
+    if ((UBaseType_t)ranks > max_prio) return -1;
+    prio = max_prio - (UBaseType_t)priority_rank;
+    vTaskPrioritySet(*t, prio);
+    return 0;
+}
+
+static inline int rx_thread_configure_current_fifo(int priority_rank, int ranks)
+{
+    rx_thread_t self = xTaskGetCurrentTaskHandle();
+    return rx_thread_configure_fifo(&self, priority_rank, ranks);
 }
 
 /* ── barrier (turnstile pattern with counting semaphore) ────────────── */
@@ -187,6 +226,13 @@ static inline int rx_barrier_init(rx_barrier_t *b, unsigned int count)
     b->mutex      = xSemaphoreCreateMutex();
     b->turnstile  = xSemaphoreCreateCounting((UBaseType_t)count, 0);
     return (b->mutex != NULL && b->turnstile != NULL) ? 0 : -1;
+}
+
+static inline void rx_barrier_reset(rx_barrier_t *b, unsigned int count)
+{
+    b->waiting = 0;
+    b->total = count;
+    b->generation = 0;
 }
 
 static inline void rx_barrier_wait(rx_barrier_t *b)

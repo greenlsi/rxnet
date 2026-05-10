@@ -1,14 +1,16 @@
 ## 3. El tick y sus fases
 
-Cada llamada a `runtime.tick()` ejecuta cinco fases en orden estricto:
+Cada llamada a `runtime.tick()` ejecuta cuatro fases de nodo en orden estricto:
 
 | # | Fase | Qué hace |
 |---|---|---|
-| 1 | **Latch inputs** | `latch_inputs_cb(ctx, user)` — leer GPIO, calcular señales derivadas, tomar snapshot |
+| 1 | **Latch** | `latch_inputs_cb(ctx, user)` — leer GPIO, calcular señales derivadas, tomar snapshot |
 | 2 | **Evaluate** | `evaluate()` — decidir siguiente estado / flags (solo lectura del snapshot) |
 | 3 | **Commit** | `commit()` — aplicar decisiones, encolar acciones diferidas |
-| 4 | **Deferred** | ejecutar cola de acciones — timers, side-effects, notificaciones |
-| 5 | **Dump** | `dump_outputs_cb(ctx, user)` — escribir GPIO, imprimir estado |
+| 4 | **Dump** | `dump_outputs_cb(ctx, user)` — escribir GPIO, imprimir estado |
+
+Entre `commit` y `dump`, el runtime despacha las acciones diferidas encoladas.
+Ese despacho es una barrera de semántica, no una fase de nodo independiente.
 
 **Sub-paso exclusivo de Python**: antes de llamar a los callbacks por nodo,
 el runtime ejecuta `context.latch_inputs()`, que copia `ctx.inputs`
@@ -18,15 +20,14 @@ compartir señales globales entre nodos sin riesgo de carrera.
 
 ### Por qué esa separación de fases
 
-La separación **evaluate / commit / deferred** no es arbitraria:
+La separación **evaluate / commit / dump** no es arbitraria:
 
 * **Evaluate** solo puede leer, nunca escribir estado observable. Todos los
   módulos ven el mismo estado del sistema al mismo tiempo.
-* **Commit** aplica las decisiones. Tras commit, el estado es consistente pero
-  los efectos externos todavía no han ocurrido.
-* **Deferred** ejecuta las acciones (arrancar un timer, encender un LED) *después*
-  de que todo el mundo haya aplicado sus decisiones. Una acción ve el estado
-  comprometido de todos los módulos, no solo el propio.
+* **Commit** aplica las decisiones. Tras el commit de todos los nodos, el
+  runtime ejecuta las acciones diferidas antes de cualquier `dump`. Una acción
+  ve el estado comprometido de todos los módulos, no solo el propio.
+* **Dump** publica salidas después de commit y del despacho de acciones diferidas.
 
 La separación **latch / dump** garantiza que las lecturas de hardware ocurren
 *antes* de evaluar (snapshot limpio) y las escrituras *después* de decidir
@@ -74,8 +75,8 @@ machine = Machine(
     state=IDLE,
     transitions=transitions,
     user=my_data,              # datos de usuario, pasados a guard/action
-    latch_inputs_cb=read_gpio, # fase 1: snapshot hardware
-    dump_outputs_cb=write_gpio,# fase 5: escribir hardware
+    latch_inputs_cb=read_gpio, # fase latch: snapshot hardware
+    dump_outputs_cb=write_gpio,# fase dump: escribir hardware
 )
 
 rt = Runtime()
@@ -97,7 +98,7 @@ from rxnet.runtime import Context
 def button_pressed(ctx: Context, data: MyData) -> bool:
     return data.latched_button_event  # leer snapshot, nunca hardware en vivo
 
-# Acción: función deferred (corre en fase 5, después de commit)
+# Acción: función deferred (corre tras commit, antes de dump)
 # En este punto todos los módulos ya aplicaron sus cambios
 def start_motor(ctx: Context, data: MyData) -> None:
     data.motor_enabled = True
@@ -487,7 +488,7 @@ siguiente tick.
 su `latch_inputs_cb`; el consumidor dispara la transición que consume ese token.
 
 **Acciones diferidas**: cualquier callback puede encolar una acción para la
-fase deferred del tick actual:
+despacho deferred del tick actual:
 
 ```python
 ctx.enqueue_deferred_action(my_action_fn, user)
@@ -512,7 +513,7 @@ ce.on_stop(lambda: pool.shutdown(wait=True))
 ce.run()
 ```
 
-Con un `WorkerPool` activo, `tick()` **no bloquea** en la fase deferred:
+Con un `WorkerPool` activo, `tick()` **no bloquea** en el despacho deferred:
 publica las acciones al pool y pasa directamente a dump. Los resultados llegan
 a `ctx.inputs` en el siguiente latch.
 
@@ -641,8 +642,8 @@ Machine(
     state=INITIAL,
     transitions=[...],
     user=my_data,
-    latch_inputs_cb=read_inputs,    # fase 1: snapshot hardware
-    dump_outputs_cb=write_outputs,  # fase 5: escribir hardware
+    latch_inputs_cb=read_inputs,    # fase latch: snapshot hardware
+    dump_outputs_cb=write_outputs,  # fase dump: escribir hardware
 )
 
 rt = Runtime()
@@ -692,7 +693,7 @@ from rxnet.runtime import Context
 def my_guard(ctx: Context, user: MyData) -> bool:
     return user.latched_event
 
-# Acción: deferred, corre en fase 5 con estado ya comprometido
+# Acción: deferred, corre tras commit con estado ya comprometido
 def my_action(ctx: Context, user: MyData) -> None:
     user.output = True
 

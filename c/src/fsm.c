@@ -33,6 +33,9 @@ static void rx_fsm_machine_evaluate(rx_node *node, rx_context *ctx) {
         if (t->guard == NULL || t->guard(ctx, machine->user)) {
             machine->next_state = t->to_state;
             machine->proposed_action = t->action;
+            if (machine->proposed_action != NULL) {
+                rx_context_enqueue_deferred_action(ctx, machine->proposed_action, machine->user);
+            }
             break;
         }
     }
@@ -41,14 +44,13 @@ static void rx_fsm_machine_evaluate(rx_node *node, rx_context *ctx) {
 static void rx_fsm_machine_commit(rx_node *node, rx_context *ctx) {
     rx_fsm_machine *machine = (rx_fsm_machine *)node;
     int prev = machine->state;
+    (void)ctx;
 
     machine->state = machine->next_state;
     RX_TRACE_FSM(node, prev, machine->state);
     (void)prev;   /* suppress -Wunused-variable when tracing is disabled */
 
-    if (machine->proposed_action != NULL) {
-        rx_context_enqueue_deferred_action(ctx, machine->proposed_action, machine->user);
-    }
+    machine->proposed_action = NULL;
 }
 
 static void rx_fsm_machine_dump_outputs(rx_node *node, rx_context *ctx) {

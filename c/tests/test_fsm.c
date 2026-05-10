@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "rxtest.h"
+#include "rxnet/coop.h"
+#include "rxnet/cyclic.h"
 #include "rxnet/fsm.h"
 
 #include <stddef.h>
@@ -306,6 +308,225 @@ static void fsm_two_machines_tick_independently(void) {
     ASSERT_EQ(STATE_C, m2.state);
 }
 
+typedef struct {
+    int id;
+} fsm_order_data;
+
+static int g_fsm_latch_order[8];
+static int g_fsm_latch_count = 0;
+static int g_fsm_dump_order[8];
+static int g_fsm_dump_count = 0;
+
+static void record_latch_order(rx_fsm_context *ctx, void *user) {
+    fsm_order_data *data = (fsm_order_data *)user;
+    (void)ctx;
+    g_fsm_latch_order[g_fsm_latch_count++] = data->id;
+}
+
+static void record_dump_order(rx_fsm_context *ctx, void *user) {
+    fsm_order_data *data = (fsm_order_data *)user;
+    (void)ctx;
+    g_fsm_dump_order[g_fsm_dump_count++] = data->id;
+}
+
+static rx_coop_exec *g_stop_coop = NULL;
+
+static void record_dump_order_and_stop_coop(rx_fsm_context *ctx, void *user) {
+    record_dump_order(ctx, user);
+    if (g_fsm_dump_count == 3 && g_stop_coop != NULL) {
+        rx_coop_exec_stop(g_stop_coop);
+    }
+}
+
+static void fsm_cyclic_exec_orders_machines_by_shorter_deadline(void) {
+    rx_cyclic_exec ce;
+    rx_fsm_runtime rt;
+    rx_fsm_machine late, early, middle;
+    fsm_order_data late_data = { .id = 3 };
+    fsm_order_data early_data = { .id = 1 };
+    fsm_order_data middle_data = { .id = 2 };
+
+    g_fsm_latch_count = 0;
+    g_fsm_dump_count = 0;
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 3));
+
+    rx_fsm_machine_init(&late, "late", STATE_A, NULL, 0, &late_data,
+                        record_latch_order, record_dump_order);
+    rx_fsm_machine_init(&early, "early", STATE_A, NULL, 0, &early_data,
+                        record_latch_order, record_dump_order);
+    rx_fsm_machine_init(&middle, "middle", STATE_A, NULL, 0, &middle_data,
+                        record_latch_order, record_dump_order);
+
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &late,   10000, 9000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &early,  10000, 2000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &middle, 10000, 5000));
+
+    rx_cyclic_exec_init(&ce);
+    ASSERT_EQ(0, rx_cyclic_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(0, rx_cyclic_exec_build(&ce));
+
+    ASSERT_EQ(3, ce.slots[0].count);
+    ASSERT_EQ(1, ce.slots[0].activation[0].node_idx);
+    ASSERT_EQ(2, ce.slots[0].activation[1].node_idx);
+    ASSERT_EQ(0, ce.slots[0].activation[2].node_idx);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void fsm_cyclic_sched_check_passes_when_wcet_fits_deadlines(void) {
+    rx_cyclic_exec ce;
+    rx_sched_report report;
+    rx_fsm_runtime rt;
+    rx_fsm_machine early, late;
+    fsm_order_data early_data = { .id = 1 };
+    fsm_order_data late_data = { .id = 2 };
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&early, "early", STATE_A, NULL, 0, &early_data,
+                        noop_latch, noop_dump);
+    rx_fsm_machine_init(&late, "late", STATE_A, NULL, 0, &late_data,
+                        noop_latch, noop_dump);
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &late,  10000, 9000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &early, 10000, 4000));
+    rt.runtime.nodes[0].wcet_us = 3000;
+    rt.runtime.nodes[1].wcet_us = 2000;
+
+    rx_cyclic_exec_init(&ce);
+    ASSERT_EQ(0, rx_cyclic_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(RX_SCHED_SCHEDULABLE,
+              rx_cyclic_exec_check_schedulability(&ce, &report, NULL));
+    ASSERT_EQ(1, report.schedulable);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void fsm_cyclic_sched_check_fails_when_wcet_misses_deadline(void) {
+    rx_cyclic_exec ce;
+    rx_sched_report report;
+    rx_fsm_runtime rt;
+    rx_fsm_machine early, late;
+    fsm_order_data early_data = { .id = 1 };
+    fsm_order_data late_data = { .id = 2 };
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&early, "early", STATE_A, NULL, 0, &early_data,
+                        noop_latch, noop_dump);
+    rx_fsm_machine_init(&late, "late", STATE_A, NULL, 0, &late_data,
+                        noop_latch, noop_dump);
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &late,  10000, 9000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &early, 10000, 4000));
+    rt.runtime.nodes[0].wcet_us = 3000;
+    rt.runtime.nodes[1].wcet_us = 5000;
+
+    rx_cyclic_exec_init(&ce);
+    ASSERT_EQ(0, rx_cyclic_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(RX_SCHED_UNSCHEDULABLE,
+              rx_cyclic_exec_check_schedulability(&ce, &report, NULL));
+    ASSERT_EQ(0, report.schedulable);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void fsm_coop_exec_orders_due_machines_by_shorter_deadline(void) {
+    rx_coop_exec ce;
+    rx_fsm_runtime rt;
+    rx_fsm_machine late, early, middle;
+    fsm_order_data late_data = { .id = 3 };
+    fsm_order_data early_data = { .id = 1 };
+    fsm_order_data middle_data = { .id = 2 };
+
+    g_fsm_latch_count = 0;
+    g_fsm_dump_count = 0;
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 3));
+
+    rx_fsm_machine_init(&late, "late", STATE_A, NULL, 0, &late_data,
+                        record_latch_order, record_dump_order_and_stop_coop);
+    rx_fsm_machine_init(&early, "early", STATE_A, NULL, 0, &early_data,
+                        record_latch_order, record_dump_order_and_stop_coop);
+    rx_fsm_machine_init(&middle, "middle", STATE_A, NULL, 0, &middle_data,
+                        record_latch_order, record_dump_order_and_stop_coop);
+
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &late,   10000, 9000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &early,  10000, 2000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &middle, 10000, 5000));
+
+    rx_coop_exec_init(&ce);
+    ASSERT_EQ(0, rx_coop_exec_add(&ce, &rt.runtime));
+    g_stop_coop = &ce;
+    rx_coop_exec_run(&ce);
+    g_stop_coop = NULL;
+
+    ASSERT_EQ(3, g_fsm_latch_count);
+    ASSERT_EQ(1, g_fsm_latch_order[0]);
+    ASSERT_EQ(2, g_fsm_latch_order[1]);
+    ASSERT_EQ(3, g_fsm_latch_order[2]);
+
+    ASSERT_EQ(3, g_fsm_dump_count);
+    ASSERT_EQ(1, g_fsm_dump_order[0]);
+    ASSERT_EQ(2, g_fsm_dump_order[1]);
+    ASSERT_EQ(3, g_fsm_dump_order[2]);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void fsm_coop_sched_check_uses_response_time_analysis(void) {
+    rx_coop_exec ce;
+    rx_sched_report report;
+    rx_fsm_runtime rt;
+    rx_fsm_machine high, low;
+    fsm_order_data high_data = { .id = 1 };
+    fsm_order_data low_data = { .id = 2 };
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&high, "high", STATE_A, NULL, 0, &high_data,
+                        noop_latch, noop_dump);
+    rx_fsm_machine_init(&low, "low", STATE_A, NULL, 0, &low_data,
+                        noop_latch, noop_dump);
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &high, 10000, 6000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &low,  10000, 9000));
+    rt.runtime.nodes[0].wcet_us = 2000;
+    rt.runtime.nodes[1].wcet_us = 3000;
+
+    rx_coop_exec_init(&ce);
+    ASSERT_EQ(0, rx_coop_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(RX_SCHED_SCHEDULABLE,
+              rx_coop_exec_check_schedulability(&ce, &report, NULL));
+    ASSERT_EQ(2, report.task_count);
+    ASSERT_EQ(3000, report.tasks[0].blocking_us);
+    ASSERT_EQ(5000, report.tasks[1].response_us);
+
+    rx_fsm_runtime_free(&rt);
+}
+
+static void fsm_coop_sched_check_fails_when_response_exceeds_deadline(void) {
+    rx_coop_exec ce;
+    rx_sched_report report;
+    rx_fsm_runtime rt;
+    rx_fsm_machine high, low;
+    fsm_order_data high_data = { .id = 1 };
+    fsm_order_data low_data = { .id = 2 };
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&high, "high", STATE_A, NULL, 0, &high_data,
+                        noop_latch, noop_dump);
+    rx_fsm_machine_init(&low, "low", STATE_A, NULL, 0, &low_data,
+                        noop_latch, noop_dump);
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &high, 10000, 4000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &low,  10000, 6000));
+    rt.runtime.nodes[0].wcet_us = 3000;
+    rt.runtime.nodes[1].wcet_us = 4000;
+
+    rx_coop_exec_init(&ce);
+    ASSERT_EQ(0, rx_coop_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(RX_SCHED_UNSCHEDULABLE,
+              rx_coop_exec_check_schedulability(&ce, &report, NULL));
+    ASSERT_EQ(0, report.schedulable);
+
+    rx_fsm_runtime_free(&rt);
+}
+
 static void fsm_tick_null_returns_error(void) {
     ASSERT_EQ(-1, rx_fsm_tick(NULL));
 }
@@ -342,6 +563,12 @@ int main(void) {
 
     TEST_SUITE("fsm multi-machine");
     RUN_TEST(fsm_two_machines_tick_independently);
+    RUN_TEST(fsm_cyclic_exec_orders_machines_by_shorter_deadline);
+    RUN_TEST(fsm_cyclic_sched_check_passes_when_wcet_fits_deadlines);
+    RUN_TEST(fsm_cyclic_sched_check_fails_when_wcet_misses_deadline);
+    RUN_TEST(fsm_coop_exec_orders_due_machines_by_shorter_deadline);
+    RUN_TEST(fsm_coop_sched_check_uses_response_time_analysis);
+    RUN_TEST(fsm_coop_sched_check_fails_when_response_exceeds_deadline);
     RUN_TEST(fsm_tick_null_returns_error);
 
     TEST_SUMMARY();

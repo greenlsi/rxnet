@@ -4,7 +4,7 @@
 
 This document outlines the design for the C implementation of `rxnet`, a synchronous reactive runtime library with two model frontends (Finite State Machine and Petri Net) built on a shared phase-based core.
 
-The core design decision is to centralize tick orchestration (`latch -> evaluate -> commit -> deferred actions`) and let each model frontend implement only model-specific behavior on top of a generic node contract.
+The core design decision is to centralize tick orchestration (`latch -> evaluate -> commit -> dump`, with deferred action dispatch between commit and dump) and let each model frontend implement only model-specific behavior on top of a generic node contract.
 
 The design emphasizes deterministic execution, explicit input snapshotting, deferred side effects, zero heap allocation during the tick path, and lightweight integration into host loops (CLI, embedded, or application-managed schedulers).
 
@@ -27,7 +27,8 @@ graph TB
     Core --> Latch["Phase 1: Latch Inputs"]
     Core --> Eval["Phase 2: Evaluate Nodes"]
     Core --> Commit["Phase 3: Commit Nodes"]
-    Core --> Deferred["Phase 4: Run Deferred Actions"]
+    Core --> Deferred["Deferred Action Dispatch"]
+    Core --> Dump["Phase 4: Dump Outputs"]
 
     Eval --> FSMNodes["FSM Machines"]
     Eval --> PNNets["PN Nets"]
@@ -37,6 +38,7 @@ graph TB
     FSMNodes --> Actions["Deferred Action Queue"]
     PNNets --> Actions
     Actions --> Deferred
+    Deferred --> Dump
 
     FSMSurface --> CAPI["C API: rxnet/fsm.h"]
     PNSurface --> CPNAPI["C API: rxnet/pn.h"]
@@ -331,7 +333,7 @@ void cli_fsm_create(rx_fsm_machine *machine, const char *name, cli_machine_data 
 interface RuntimeModel {
   context: ContextModel
   nodes: NodeModel[]
-  tickPhases: ['latch', 'evaluate', 'commit', 'deferred']
+  tickPhases: ['latch', 'evaluate', 'commit', 'dump']
 }
 
 interface ContextModel {
@@ -395,8 +397,8 @@ interface PNArcModel {
 *A property is a behavior that should hold for all valid executions. Properties connect requirements with verifiable guarantees in unit, integration, and property-based tests.*
 
 ### Property 1: Phase Ordering Determinism
-*For any* tick execution, phase order should always be `latch -> evaluate -> commit -> deferred`.
-**Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5**
+*For any* tick execution, node phase order should always be `latch -> evaluate -> commit -> dump`, with deferred action dispatch after all active commits and before any dump.
+**Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 1.6**
 
 ### Property 2: Snapshot Consistency Within Tick
 *For any* guard evaluation during one tick, observed inputs should come from each node's latched snapshot (taken in phase 1) and remain stable for that tick.
@@ -536,7 +538,7 @@ interface PNArcModel {
 - Compile with `-std=c11 -Wall -Wextra -Wpedantic`
 - Preserve null-safety checks and explicit error returns
 - Keep ownership boundaries explicit (runtime-owned vs host-owned memory)
-- The tick path (`latch`, `evaluate`, `commit`, `run deferred actions`) SHALL perform no heap allocation
+- The tick path (`latch`, `evaluate`, `commit`, deferred action dispatch, `dump`) SHALL perform no heap allocation
 
 ## Non-Goals and Out-of-Scope
 

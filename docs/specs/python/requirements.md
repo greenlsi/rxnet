@@ -20,7 +20,7 @@ The goal of this document is to capture what the Python library provides today, 
 - **PN_Net**: Petri net node with places, transitions (`rxnet.pn.Net`)
 - **PN_Transition**: Petri transition with consume/produce arcs, optional guard/action (`rxnet.pn.Transition`)
 - **Arc**: Petri arc with `place_id` and `weight` (`rxnet.pn.Arc`)
-- **Tick**: One complete synchronous cycle: latch -> evaluate -> commit -> deferred actions
+- **Tick**: One complete synchronous cycle: latch -> evaluate -> commit -> dump, with deferred action dispatch between commit and dump
 
 ## Requirements
 
@@ -33,8 +33,9 @@ The goal of this document is to capture what the Python library provides today, 
 1. WHEN a tick starts, THE Core_Runtime SHALL latch input data before node evaluation
 2. WHEN latching completes, THE Core_Runtime SHALL evaluate all registered nodes
 3. WHEN evaluation completes, THE Core_Runtime SHALL commit all registered nodes
-4. WHEN commit completes, THE Core_Runtime SHALL execute deferred actions and clear the queue
-5. THE Tick order SHALL remain `latch -> evaluate -> commit -> deferred actions` in the Python implementation
+4. WHEN commit completes, THE Core_Runtime SHALL execute deferred actions and clear the queue before dump
+5. WHEN deferred action dispatch completes, THE Core_Runtime SHALL dump outputs for all nodes
+6. THE Tick order SHALL remain `latch -> evaluate -> commit -> dump` in the Python implementation, with deferred action dispatch between commit and dump
 
 ### Requirement 2: Context and Input Snapshot Handling
 

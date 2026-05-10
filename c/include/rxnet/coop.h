@@ -6,9 +6,10 @@
 /*
  * rxnet/coop.h — Cooperative (single-thread) multi-rate scheduler.
  *
- * Runs registered runtimes on a single OS thread.  Each runtime is called
- * when its deadline has passed; after all due runtimes are serviced the
- * scheduler sleeps until the nearest upcoming deadline.
+ * Runs registered runtimes on a single OS thread.  Each loop selects the
+ * nodes whose next activation time has passed, orders them by effective
+ * deadline, executes one synchronous tick for that active list, then sleeps
+ * until the nearest upcoming node activation.
  *
  * Contrast with the cyclic executive (rxnet/cyclic.h):
  *   - Cyclic exec: pre-computed static dispatch table; jitter-free ticking.
@@ -16,8 +17,7 @@
  *                  (tolerates tasks that run longer than one period without
  *                  corrupting the table), no OS scheduling overhead.
  *
- * The scheduling period for each runtime is read from rt->period_us, which
- * is set by rx_runtime_build() (called automatically by rx_coop_exec_add()).
+ * Per-node activation periods are read from runtime node entries.
  *
  * Usage:
  *
@@ -39,12 +39,13 @@ extern "C" {
 
 typedef struct {
     rx_runtime *rt;
-    rx_tick_t   next_tick;
+    rx_tick_t   next_tick[RXNET_MAX_RUNTIME_NODES];
 } rx_coop_task;
 
 typedef struct {
     rx_coop_task tasks[RXNET_CE_MAX_TASKS];
     int          ntasks;
+    int          sched_check_enabled;
     volatile int stop_requested;
     void       (*on_stop)(void *user);
     void        *on_stop_user;
@@ -56,13 +57,17 @@ void rx_coop_exec_init(rx_coop_exec *ce);
 /*
  * Register a runtime.
  *
- * Calls rx_runtime_build() if not already built.  Reads rt->period_us as
- * the scheduling period.
+ * Calls rx_runtime_build() to validate scheduling metadata.
  *
  * Returns 0 on success, -1 if RXNET_CE_MAX_TASKS is exceeded, the runtime
  * has no periodic nodes, or rx_runtime_build() fails.
  */
 int rx_coop_exec_add(rx_coop_exec *ce, rx_runtime *rt);
+
+int rx_coop_exec_enable_sched_check(rx_coop_exec *ce, int enabled);
+int rx_coop_exec_check_schedulability(rx_coop_exec *ce,
+                                      rx_sched_report *report,
+                                      FILE *log);
 
 /* Enter the scheduler loop.  Returns after rx_coop_exec_stop() is requested. */
 void rx_coop_exec_run(rx_coop_exec *ce);

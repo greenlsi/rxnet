@@ -4,7 +4,7 @@
 
 This document outlines the design for the Python implementation of `rxnet`, a synchronous reactive runtime library with two model frontends (Finite State Machine and Petri Net) built on a shared phase-based core.
 
-The core design decision is to centralize tick orchestration (`latch -> evaluate -> commit -> deferred actions`) and let each model frontend implement only model-specific behavior on top of a generic node contract.
+The core design decision is to centralize tick orchestration (`latch -> evaluate -> commit -> dump`, with deferred action dispatch between commit and dump) and let each model frontend implement only model-specific behavior on top of a generic node contract.
 
 The design emphasizes deterministic execution, explicit input snapshotting, deferred side effects, and ergonomic dataclass-based APIs using only standard-library modules.
 
@@ -178,7 +178,7 @@ class Net:
 interface RuntimeModel {
   context: ContextModel
   nodes: NodeModel[]
-  tickPhases: ['latch', 'evaluate', 'commit', 'deferred']
+  tickPhases: ['latch', 'evaluate', 'commit', 'dump']
 }
 
 interface ContextModel {
@@ -242,8 +242,8 @@ interface PNArcModel {
 *A property is a behavior that should hold for all valid executions. Properties connect requirements with verifiable guarantees in unit, integration, and property-based tests.*
 
 ### Property 1: Phase Ordering Determinism
-*For any* tick execution, phase order should always be `latch -> evaluate -> commit -> deferred`.
-**Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5**
+*For any* tick execution, phase order should always be `latch -> evaluate -> commit -> dump`, with deferred action dispatch after commit and before dump.
+**Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 1.6**
 
 ### Property 2: Snapshot Consistency Within Tick
 *For any* guard evaluation during one tick, observed inputs should come from `latched_inputs` and remain stable for that tick.

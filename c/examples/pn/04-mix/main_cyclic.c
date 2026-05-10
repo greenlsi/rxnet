@@ -4,7 +4,7 @@
 /*
  * PN 03-mix — cyclic executive with per-net periods.
  *
- * Each net (and the CLI machine) carries its own period; each runtime
+ * Each net (and the CLI machine) carries its own period; the cyclic executive
  * builds its hyperperiod dispatch table automatically:
  *
  *   pn_rt:  light_a 10 ms, blink_b 10 ms, auto_c 20 ms  [rx_pn_runtime]
@@ -178,7 +178,7 @@ main(void)
     }
 
     /*
-     * Periods per net — pn_rt builds its own hyperperiod table:
+     * Periods per net — the cyclic executive builds the hyperperiod table:
      *   base = GCD(10, 10, 20) = 10 ms, hyper = 20 ms → 2 slots
      *   slot 0: light_a, blink_b, auto_c
      *   slot 1: light_a, blink_b

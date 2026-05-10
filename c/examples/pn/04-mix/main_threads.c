@@ -7,12 +7,12 @@
  * Two runtimes registered in one rx_thread_exec:
  *
  *   pn_rt:  light_a (10 ms) + blink_b (10 ms) + auto_c (20 ms)
- *             → 3 parallel threads with per-slot barriers
+ *             → 3 parallel threads with per-activation barriers
  *   cli_rt: cli FSM (10 ms)
  *             → main thread (last node of last runtime)
  *
  * Each runtime forms an independent barrier group.  Nodes within a
- * runtime synchronise via latch/commit barriers; nodes in different
+ * runtime synchronise via evaluate/commit barriers; nodes in different
  * runtimes run fully independently (no shared context or barriers).
  *
  * Build:

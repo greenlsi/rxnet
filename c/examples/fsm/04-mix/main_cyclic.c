@@ -4,7 +4,7 @@
 /*
  * FSM 03-mix — cyclic executive with per-machine periods.
  *
- * Each machine carries its own period; the runtime builds the
+ * Each machine carries its own period; the cyclic executive builds the
  * hyperperiod dispatch table automatically:
  *
  *   light_a  10 ms   (button A → light A)
@@ -186,7 +186,7 @@ main(void)
 
     /*
      * Each machine carries its own period and deadline.
-     * The runtime builds the hyperperiod table from these:
+     * The cyclic executive builds the hyperperiod table from these:
      *   base  = GCD(10, 10, 20, 10) = 10 ms
      *   hyper = LCM              = 20 ms  → 2 slots
      *   slot 0: light_a, blink_b, cli, auto_c

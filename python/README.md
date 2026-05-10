@@ -5,11 +5,13 @@ It supports two model families — **FSM** and **Petri Net** — that share one 
 
 ## Tick phases (per cycle)
 
-1. **Latch inputs** — global `ctx.latch_inputs()` snapshots shared inputs; each node's `latch_inputs()` runs
+1. **Latch** — global `ctx.latch_inputs()` snapshots shared inputs; each node's `latch_inputs()` runs
 2. **Evaluate** — all nodes compute next state / fire transitions against the snapshot
 3. **Commit** — all nodes apply updates; deferred actions are enqueued
-4. **Dispatch deferred** — post-commit callbacks fire (timers, GPIO writes, side-effects)
-5. **Dump outputs** — each node's `dump_outputs()` runs (write outputs, clear flags)
+4. **Dump** — each node's `dump_outputs()` runs after deferred action dispatch
+
+Deferred actions dispatch after commit and before dump, but they are not a
+separate node phase.
 
 All nodes observe a consistent snapshot.  Guards in phase 2 never see a half-committed peer.
 
