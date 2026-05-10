@@ -500,6 +500,34 @@ static void fsm_coop_sched_check_uses_response_time_analysis(void) {
     rx_fsm_runtime_free(&rt);
 }
 
+static void fsm_coop_sched_check_iterates_interference_to_convergence(void) {
+    rx_coop_exec ce;
+    rx_sched_report report;
+    rx_fsm_runtime rt;
+    rx_fsm_machine high, low;
+    fsm_order_data high_data = { .id = 1 };
+    fsm_order_data low_data = { .id = 2 };
+
+    ASSERT_EQ(0, rx_fsm_runtime_init(&rt, 2));
+    rx_fsm_machine_init(&high, "high", STATE_A, NULL, 0, &high_data,
+                        noop_latch, noop_dump);
+    rx_fsm_machine_init(&low, "low", STATE_A, NULL, 0, &low_data,
+                        noop_latch, noop_dump);
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &high, 3000, 3000));
+    ASSERT_EQ(0, rx_fsm_runtime_add_machine(&rt, &low, 20000, 20000));
+    rt.runtime.nodes[0].wcet_us = 2000;
+    rt.runtime.nodes[1].wcet_us = 2000;
+
+    rx_coop_exec_init(&ce);
+    ASSERT_EQ(0, rx_coop_exec_add(&ce, &rt.runtime));
+    ASSERT_EQ(RX_SCHED_UNSCHEDULABLE,
+              rx_coop_exec_check_schedulability(&ce, &report, NULL));
+    ASSERT_EQ(4000, report.tasks[1].interference_us);
+    ASSERT_EQ(6000, report.tasks[1].response_us);
+
+    rx_fsm_runtime_free(&rt);
+}
+
 static void fsm_coop_sched_check_fails_when_response_exceeds_deadline(void) {
     rx_coop_exec ce;
     rx_sched_report report;
@@ -568,6 +596,7 @@ int main(void) {
     RUN_TEST(fsm_cyclic_sched_check_fails_when_wcet_misses_deadline);
     RUN_TEST(fsm_coop_exec_orders_due_machines_by_shorter_deadline);
     RUN_TEST(fsm_coop_sched_check_uses_response_time_analysis);
+    RUN_TEST(fsm_coop_sched_check_iterates_interference_to_convergence);
     RUN_TEST(fsm_coop_sched_check_fails_when_response_exceeds_deadline);
     RUN_TEST(fsm_tick_null_returns_error);
 

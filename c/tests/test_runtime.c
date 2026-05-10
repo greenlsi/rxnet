@@ -504,6 +504,31 @@ static void thread_sched_check_uses_response_time_analysis(void) {
     ASSERT_EQ(3000, report.tasks[1].response_us);
 }
 
+static void thread_sched_check_iterates_interference_to_convergence(void) {
+    rx_context ctx;
+    rx_runtime rt;
+    rx_thread_exec te;
+    rx_sched_report report;
+    test_node high, low;
+
+    rx_context_init(&ctx);
+    rx_runtime_init(&rt, &ctx, 2);
+    test_node_init(&high);
+    test_node_init(&low);
+
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &high.node, 3000, 3000));
+    ASSERT_EQ(0, rx_runtime_add_node(&rt, &low.node, 20000, 20000));
+    rt.nodes[0].wcet_us = 2000;
+    rt.nodes[1].wcet_us = 2000;
+
+    rx_thread_exec_init(&te);
+    ASSERT_EQ(0, rx_thread_exec_add(&te, &rt));
+    ASSERT_EQ(RX_SCHED_SCHEDULABLE,
+              rx_thread_exec_check_schedulability(&te, &report, NULL));
+    ASSERT_EQ(4000, report.tasks[1].interference_us);
+    ASSERT_EQ(6000, report.tasks[1].response_us);
+}
+
 static void thread_sched_check_uses_shared_resource_blocking(void) {
     rx_context ctx;
     rx_runtime rt;
@@ -670,6 +695,7 @@ int main(void) {
     RUN_TEST(runtime_destroy_null_is_safe);
     RUN_TEST(runtime_build_does_not_materialize_activation_table);
     RUN_TEST(thread_sched_check_uses_response_time_analysis);
+    RUN_TEST(thread_sched_check_iterates_interference_to_convergence);
     RUN_TEST(thread_sched_check_uses_shared_resource_blocking);
     RUN_TEST(thread_exec_rejects_async_nodes);
 

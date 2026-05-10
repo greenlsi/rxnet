@@ -136,5 +136,6 @@ The goal of this document is to capture what the Python library provides today, 
 5. THE library SHALL support using one shared typed input structure across multiple model nodes in the same runtime context
 6. THE Core_Runtime SHALL NOT materialise a hyperperiod activation table
 7. THE cyclic, cooperative, and thread executors SHALL own their scheduling state
-8. THE cyclic and cooperative executors SHALL expose schedulability analysis based on measured WCET values
-9. THE thread executor SHALL report schedulability analysis as unsupported when fixed-priority FIFO scheduling is unavailable
+8. THE cyclic, cooperative, and thread executors SHALL expose schedulability analysis based on measured WCET values
+9. THE runtime SHALL measure and retain the maximum critical-section access time for each task/resource pair
+10. THE thread executor SHALL include shared-resource blocking in response-time analysis using lower-priority critical sections without reusing a task or resource in the same blocking combination

@@ -116,8 +116,18 @@ Executors can enable automatic schedulability checks with
 `.enable_sched_check(True)` and report calculations with `.check_schedulability()`.
 `CyclicExecutive` checks the hyperperiod table with measured WCETs;
 `CoopExecutive` uses response-time analysis with cooperative blocking;
-`ThreadExecutive` reports the analysis as unsupported because Python does not
-provide fixed-priority FIFO thread scheduling.
+`ThreadExecutive` uses fixed-priority response-time analysis ordered by
+effective deadline.
+
+Critical sections can be measured with `ctx.critical_section(resource_id)`.
+In `ThreadExecutive` they are protected by a per-resource lock; in cyclic and
+cooperative executors the lock is not needed, but the maximum observed access
+time per task/resource is still recorded. Schedulability reports include those
+resource maxima plus `B` (maximum blocking), `I` (maximum interference), and
+`R` (worst-case response time). Interference is solved iteratively: start from
+one activation of every higher-priority task, compute `R = C + B + I`, then
+recompute `I = sum(ceil(R/Tj) * Cj)` until `R` converges or exceeds the
+deadline.
 
 ## Basic integration pattern (FSM)
 

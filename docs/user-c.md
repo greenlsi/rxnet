@@ -513,6 +513,35 @@ tiempo de respuesta sólo cuando se ha podido configurar FIFO de prioridades
 fijas. Si FIFO no está disponible, el executor puede seguir funcionando, pero
 el análisis se reporta como no soportado.
 
+Las secciones críticas sobre recursos compartidos se delimitan con
+`rx_context_critical_begin(ctx, resource_id)` y
+`rx_context_critical_end(ctx)`. En `rx_thread_exec` el contexto usa un
+`rx_mutex_t` por recurso; el puerto POSIX intenta inicializarlo con
+`PTHREAD_PRIO_INHERIT`, y los puertos RTOS usan el mutex nativo. En
+`rx_cyclic_exec` y `rx_coop_exec` no se toma ningún mutex porque la sección ya
+queda contenida en el bloque atómico del tick, pero se mide igualmente. El
+runtime conserva el máximo observado de cada par tarea/recurso y lo incluye en
+`rx_sched_report`.
+
+```c
+static void machine_eval(rx_node *node, rx_context *ctx)
+{
+    rx_context_critical_begin(ctx, 1);
+    shared_state.value++;
+    rx_context_critical_end(ctx);
+}
+```
+
+En cada tarea del informe, `blocking_us` es el bloqueo máximo,
+`interference_us` la interferencia máxima y `response_us` el tiempo de
+respuesta peor caso. Para `rx_thread_exec`, el bloqueo se calcula como la suma
+máxima de combinaciones de secciones críticas de tareas de menor prioridad,
+sin elegir dos secciones de la misma tarea ni dos secciones del mismo recurso.
+La interferencia se calcula iterativamente: primero se asume una activación de
+cada tarea de mayor prioridad en el instante crítico, y después se recalcula
+`I = sum(ceil(R/Tj) * Cj)` con el último `R = C + B + I` hasta que el tiempo de
+respuesta converge o supera el plazo.
+
 ### 6.4 Resumen comparativo de executors
 
 | | `rx_cyclic_exec` | `rx_coop_exec` | `rx_thread_exec` |

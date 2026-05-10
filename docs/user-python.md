@@ -435,8 +435,31 @@ El análisis automático de planificabilidad se activa con
 `enable_sched_check(True)` y puede reportarse con `check_schedulability()`.
 `CyclicExecutive` analiza su hiperperíodo con WCETs medidos, `CoopExecutive`
 usa análisis iterativo de tiempo de respuesta con bloqueo cooperativo, y
-`ThreadExecutive` marca el análisis como no soportado porque Python no ofrece
-FIFO de prioridades fijas para threads.
+`ThreadExecutive` usa análisis de tiempo de respuesta con prioridades fijas
+por plazo efectivo.
+
+Las secciones críticas sobre recursos compartidos se declaran dentro del
+callback del nodo con `ctx.critical_section(resource_id)`. En
+`ThreadExecutive` el contexto protege la sección con un mutex por recurso; en
+`CyclicExecutive` y `CoopExecutive` no toma ningún mutex porque la ejecución ya
+está contenida en el bloque atómico del tick, pero sí mide el tiempo. El
+runtime guarda el máximo observado para cada par tarea/recurso y lo añade al
+informe de planificabilidad.
+
+```python
+def evaluate(self, ctx):
+    with ctx.critical_section(1):
+        shared_state.value += 1
+```
+
+En el informe, `B` es el bloqueo máximo, `I` la interferencia máxima y `R` el
+tiempo de respuesta peor caso. Para `ThreadExecutive`, `B` se calcula como la
+suma máxima de combinaciones de secciones críticas de tareas de menor
+prioridad, sin usar dos secciones de la misma tarea ni dos secciones del mismo
+recurso. La interferencia se calcula iterativamente: primero se asume una
+activación de cada tarea de mayor prioridad en el instante crítico, y después
+se recalcula `I = sum(ceil(R/Tj) * Cj)` con el último `R = C + B + I` hasta que
+el tiempo de respuesta converge o supera el plazo.
 
 ### 6.4 Resumen comparativo de executors
 

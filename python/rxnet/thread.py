@@ -171,7 +171,10 @@ class ThreadExecutive:
             di = effective_deadline(entry)
             lower = tasks[i + 1:]
             blocking = _max_thread_blocking(lower)
-            ri_prev = ci + blocking
+            initial_interference = sum(
+                hrt._entries[hidx].wcet_us for hrt, hidx in tasks[:i]
+            )
+            ri_prev = ci + blocking + initial_interference
             converged = False
             while True:
                 interference = 0

@@ -338,9 +338,16 @@ rx_thread_exec_check_schedulability(rx_thread_exec *te,
             long ci = ei->wcet_us;
             long di = effective_deadline(ei);
             long bi = max_thread_blocking(tasks, i + 1, count);
-            long ri_prev = ci + bi;
-            long ri = ci + bi;
+            long initial_interference = 0;
+            long ri_prev;
+            long ri;
             int converged = 0;
+
+            for (j = 0; j < i; ++j) {
+                initial_interference += tasks[j].rt->nodes[tasks[j].node_idx].wcet_us;
+            }
+            ri_prev = ci + bi + initial_interference;
+            ri = ri_prev;
 
             for (;;) {
                 long interference = 0;

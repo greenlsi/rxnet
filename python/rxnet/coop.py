@@ -127,7 +127,10 @@ class CoopExecutive:
             di = effective_deadline(entry)
             lower = [tasks[j] for j in range(i + 1, len(tasks))]
             blocking = max((lrt._entries[lidx].wcet_us for lrt, lidx in lower), default=0)
-            ri_prev = ci + blocking
+            initial_interference = sum(
+                hrt._entries[hidx].wcet_us for hrt, hidx in tasks[:i]
+            )
+            ri_prev = ci + blocking + initial_interference
             converged = False
             while True:
                 interference = 0

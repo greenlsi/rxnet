@@ -409,6 +409,26 @@ class TestCoopExecutive:
         assert cli.ticks == 3
         assert slow.activation_us[:2] == [0, 20_000]
 
+    def test_sched_interference_iterates_until_response_converges(self) -> None:
+        from rxnet.coop import CoopExecutive
+
+        high = CountingNode("high")
+        low = CountingNode("low")
+        rt = Runtime()
+        rt.add_node(high, period_us=3_000, deadline_us=3_000)
+        rt.add_node(low, period_us=20_000, deadline_us=20_000)
+        rt._entries[0].wcet_us = 2_000
+        rt._entries[1].wcet_us = 2_000
+
+        ce = CoopExecutive()
+        ce.add(rt)
+        report = SchedReport()
+
+        ce.check_schedulability(report)
+
+        assert report.tasks[1].interference_us == 4_000
+        assert report.tasks[1].response_us == 6_000
+
 
 # ------------------------------------------------------------------ #
 # ThreadExecutive                                                      #
@@ -690,6 +710,26 @@ class TestThreadExecutive:
 
         assert status == 1
         assert report.tasks[0].blocking_us == 1200
+
+    def test_thread_sched_interference_iterates_until_response_converges(self) -> None:
+        from rxnet.thread import ThreadExecutive
+
+        high = CountingNode("high")
+        low = CountingNode("low")
+        rt = Runtime()
+        rt.add_node(high, period_us=3_000, deadline_us=3_000)
+        rt.add_node(low, period_us=20_000, deadline_us=20_000)
+        rt._entries[0].wcet_us = 2_000
+        rt._entries[1].wcet_us = 2_000
+
+        te = ThreadExecutive()
+        te.add(rt)
+        report = SchedReport()
+
+        te.check_schedulability(report)
+
+        assert report.tasks[1].interference_us == 4_000
+        assert report.tasks[1].response_us == 6_000
 
     def test_sched_report_prints_resource_access_maxima(self) -> None:
         node = CriticalNode("node", {7: 250})

@@ -149,6 +149,7 @@ rx_coop_exec_check_schedulability(rx_coop_exec *ce,
         long ci = ei->wcet_us;
         long di = effective_deadline(ei);
         long bi = 0;
+        long initial_interference = 0;
         long ri_prev, ri;
         int converged = 0;
         rx_sched_task_result *tr = NULL;
@@ -157,8 +158,11 @@ rx_coop_exec_check_schedulability(rx_coop_exec *ce,
             long cj = tasks[j].rt->nodes[tasks[j].node_idx].wcet_us;
             if (cj > bi) bi = cj;
         }
+        for (j = 0; j < i; ++j) {
+            initial_interference += tasks[j].rt->nodes[tasks[j].node_idx].wcet_us;
+        }
 
-        ri_prev = ci + bi;
+        ri_prev = ci + bi + initial_interference;
         for (;;) {
             long interference = 0;
             for (j = 0; j < i; ++j) {

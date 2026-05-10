@@ -130,6 +130,17 @@ shutdown logic that must run once before `rx_*_exec_run()` returns.
 Interactive examples enable the executor schedulability check and register a
 `sched` command that logs the analysis using the WCET samples measured so far.
 
+Critical sections over shared resources are delimited with
+`rx_context_critical_begin(ctx, resource_id)` and
+`rx_context_critical_end(ctx)`. Thread execution protects them with a
+per-resource `rx_mutex_t` using the port's priority-inheritance mutex support
+where available; cyclic and cooperative execution only measure them because
+the tick is already atomic. Reports include the maximum observed access time
+per task/resource plus maximum blocking, interference, and worst-case response
+time. Interference is solved iteratively: start from one activation of every
+higher-priority task, compute `R = C + B + I`, then recompute
+`I = sum(ceil(R/Tj) * Cj)` until `R` converges or exceeds the deadline.
+
 Multiple runtimes can be registered; each forms an independent barrier group:
 
 ```c
