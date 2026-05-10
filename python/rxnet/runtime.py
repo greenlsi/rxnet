@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from concurrent.futures import Executor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, TextIO
 
 from .worker_pool import Priority, WorkerPool
@@ -60,22 +60,14 @@ class SchedTaskResult:
     blocking_us: int = 0
     response_us: int = 0
     schedulable: bool = True
-    resource_accesses: list[SchedResourceAccess] | None = None
-
-    def __post_init__(self) -> None:
-        if self.resource_accesses is None:
-            self.resource_accesses = []
+    resource_accesses: list[SchedResourceAccess] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class SchedReport:
     schedulable: bool = True
     unsupported: bool = False
-    tasks: list[SchedTaskResult] | None = None
-
-    def __post_init__(self) -> None:
-        if self.tasks is None:
-            self.tasks = []
+    tasks: list[SchedTaskResult] = field(default_factory=list)
 
 
 def effective_deadline(entry: _NodeEntry) -> int:
