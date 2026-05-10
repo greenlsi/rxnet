@@ -11,8 +11,8 @@ These tests mirror the C-side multi-rate tests and verify:
 """
 from __future__ import annotations
 
-import sys
 import io
+import sys
 import threading
 import time
 from contextlib import contextmanager

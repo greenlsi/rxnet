@@ -14,10 +14,10 @@ from typing import Any, TextIO
 
 from .cyclic import sleep_until
 from .runtime import (
-    Context,
     SCHED_ERROR,
     SCHED_SCHEDULABLE,
     SCHED_UNSCHEDULABLE,
+    Context,
     SchedReport,
     SchedResourceAccess,
     SchedTaskResult,

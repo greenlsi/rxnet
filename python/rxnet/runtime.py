@@ -436,7 +436,6 @@ class Runtime:
 
         entries = [self._entries[i] for i in node_indices]
         self.context.activation_us = activation_us
-        nodes = [e.node for e in entries]
         if self._executor is not None:
             elapsed = self._parallel_tick(entries)
         else:
