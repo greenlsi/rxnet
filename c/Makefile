@@ -272,6 +272,8 @@ install: $(LIB)
 	install -m 644 $(LIB) $(PREFIX)/lib/
 	install -d $(PREFIX)/include/rxnet
 	install -m 644 include/rxnet/*.h $(PREFIX)/include/rxnet/
+	install -d $(PREFIX)/include/rxnet/port
+	install -m 644 include/rxnet/port/*.h $(PREFIX)/include/rxnet/port/
 
 
 # ------------------------------------------------------------------ #
