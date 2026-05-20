@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -233,3 +234,42 @@ def test_main_clang_error_returns_1(monkeypatch, capsys):
     monkeypatch.setattr(m, "run_clang_ast", boom)
     rc = m.main(["dummy.c", "--dot"])
     assert rc == 1
+
+
+# ── integration tests — requires clang on PATH ────────────────────────────────
+
+RXNET_C_ROOT = Path(__file__).resolve().parents[2] / "c"
+LIGHT_FSM_C  = RXNET_C_ROOT / "examples" / "fsm" / "01-light" / "light_fsm.c"
+_CLANG_PATH = Path("/usr/bin/clang")
+_CLANG_EXISTS = _CLANG_PATH.exists()
+
+
+@pytest.mark.skipif(
+    not _CLANG_EXISTS or not LIGHT_FSM_C.exists(),
+    reason="clang not found or light_fsm.c not found",
+)
+def test_integration_light_fsm():
+    from rxnet.tools.extract_c import run_clang_ast
+    ast = run_clang_ast(LIGHT_FSM_C, [f"-I{RXNET_C_ROOT / 'include'}"])
+    spec = ast_to_spec(ast)
+    assert spec.name == "light"
+    assert {s.name for s in spec.states} == {"OFF", "ON"}
+    assert spec.initial_name == "OFF"
+    assert len(spec.transitions) == 2
+    guards = {t.guard for t in spec.transitions}
+    assert guards == {"button_pressed"}
+
+
+@pytest.mark.skipif(
+    not _CLANG_EXISTS or not LIGHT_FSM_C.exists(),
+    reason="clang not found or light_fsm.c not found",
+)
+def test_integration_dot_output():
+    from rxnet.tools.extract_c import run_clang_ast
+    ast = run_clang_ast(LIGHT_FSM_C, [f"-I{RXNET_C_ROOT / 'include'}"])
+    spec = ast_to_spec(ast)
+    dot = generate_dot(spec)
+    assert "digraph" in dot
+    assert '"OFF"' in dot
+    assert '"ON"' in dot
+    assert "button_pressed" in dot
