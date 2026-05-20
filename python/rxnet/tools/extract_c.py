@@ -198,3 +198,62 @@ def generate_mermaid(spec: FsmSpec) -> str:
             arrow += f" : {label}"
         lines.append(arrow)
     return "\n".join(lines)
+
+
+# ── clang runner ───────────────────────────────────────────────────────────────
+
+def run_clang_ast(c_file: Path, extra_args: list[str]) -> dict:
+    """Run clang -ast-dump=json and return the parsed JSON dict."""
+    cmd = [
+        "clang",
+        "-Xclang", "-ast-dump=json",
+        "-fsyntax-only",
+        str(c_file),
+        *extra_args,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "clang exited non-zero")
+    return json.loads(result.stdout)
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="python -m rxnet.tools.extract_c",
+        description="Extract FSM topology from C source via clang AST dump.",
+    )
+    ap.add_argument("c_file", metavar="FILE.c")
+    ap.add_argument("--tla",     action="store_true", help="emit TLA+ spec")
+    ap.add_argument("--dot",     action="store_true", help="emit Graphviz DOT")
+    ap.add_argument("--mermaid", action="store_true", help="emit Mermaid stateDiagram-v2")
+
+    args, clang_args = ap.parse_known_args(argv)
+
+    if not (args.tla or args.dot or args.mermaid):
+        ap.error("at least one of --tla, --dot, --mermaid is required")
+
+    c_file = Path(args.c_file).resolve()
+
+    try:
+        ast = run_clang_ast(c_file, clang_args)
+        spec = ast_to_spec(ast)
+    except (RuntimeError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    outputs = []
+    if args.tla:
+        outputs.append(generate_tla(spec))
+    if args.dot:
+        outputs.append(generate_dot(spec))
+    if args.mermaid:
+        outputs.append(generate_mermaid(spec))
+
+    print("\n---\n".join(outputs))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -175,3 +175,61 @@ def test_generate_tla_reuse():
     assert "S_OFF == 0" in tla
     assert "S_ON == 1" in tla
     assert "T_OFF_ON_button_pressed" in tla
+
+
+# ── CLI tests ─────────────────────────────────────────────────────────────────
+
+def test_main_dot(monkeypatch, capsys):
+    import rxnet.tools.extract_c as m
+    monkeypatch.setattr(m, "run_clang_ast", lambda path, args: LIGHT_AST)
+    rc = m.main(["dummy.c", "--dot"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "digraph" in out
+    assert "OFF" in out
+
+
+def test_main_tla(monkeypatch, capsys):
+    import rxnet.tools.extract_c as m
+    monkeypatch.setattr(m, "run_clang_ast", lambda path, args: LIGHT_AST)
+    rc = m.main(["dummy.c", "--tla"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "MODULE light_fsm" in out
+
+
+def test_main_mermaid(monkeypatch, capsys):
+    import rxnet.tools.extract_c as m
+    monkeypatch.setattr(m, "run_clang_ast", lambda path, args: LIGHT_AST)
+    rc = m.main(["dummy.c", "--mermaid"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "stateDiagram-v2" in out
+
+
+def test_main_multiple_formats(monkeypatch, capsys):
+    import rxnet.tools.extract_c as m
+    monkeypatch.setattr(m, "run_clang_ast", lambda path, args: LIGHT_AST)
+    rc = m.main(["dummy.c", "--dot", "--tla"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "digraph" in out
+    assert "MODULE light_fsm" in out
+    assert "---" in out
+
+
+def test_main_no_format_exits_nonzero(monkeypatch):
+    import rxnet.tools.extract_c as m
+    monkeypatch.setattr(m, "run_clang_ast", lambda path, args: LIGHT_AST)
+    with pytest.raises(SystemExit) as exc_info:
+        m.main(["dummy.c"])
+    assert exc_info.value.code != 0
+
+
+def test_main_clang_error_returns_1(monkeypatch, capsys):
+    import rxnet.tools.extract_c as m
+    def boom(path, args):
+        raise RuntimeError("clang not found")
+    monkeypatch.setattr(m, "run_clang_ast", boom)
+    rc = m.main(["dummy.c", "--dot"])
+    assert rc == 1
