@@ -112,8 +112,55 @@ def _find_machine_init(ast: dict) -> tuple[str, str] | None:
 # ── Additional public functions (stubs for now) ────────────────────────────────
 
 def ast_to_spec(ast: dict) -> FsmSpec:
-    """Convert AST to FsmSpec (implementation pending)."""
-    raise NotImplementedError()
+    """Extract an FsmSpec from a clang AST JSON dict."""
+    enum_constants = _collect_enum_constants(ast)
+    raw_transitions = _find_transitions(ast)
+    init_info = _find_machine_init(ast)
+
+    if not enum_constants:
+        raise ValueError("No *_STATE_* enum constants found")
+    if init_info is None:
+        raise ValueError("No rx_fsm_machine_init call found")
+
+    machine_name, initial_const = init_info
+
+    def _state_suffix(const_name: str) -> str:
+        return const_name.split("_STATE_", 1)[1] if "_STATE_" in const_name else const_name
+
+    states = [
+        FsmState(id=v, name=_state_suffix(k))
+        for k, v in sorted(enum_constants.items(), key=lambda x: x[1])
+    ]
+    by_name = {s.name: s.id for s in states}
+
+    initial_name = _state_suffix(initial_const)
+
+    transitions: list[FsmTransition] = []
+    for from_c, to_c, guard, action in raw_transitions:
+        from_name = _state_suffix(from_c) if from_c else ""
+        to_name = _state_suffix(to_c) if to_c else ""
+        transitions.append(FsmTransition(
+            from_id=by_name[from_name],
+            to_id=by_name[to_name],
+            from_name=from_name,
+            to_name=to_name,
+            guard=guard,
+            action=action,
+        ))
+
+    guards = list(dict.fromkeys(t.guard for t in transitions if t.guard))
+    actions = list(dict.fromkeys(t.action for t in transitions if t.action))
+
+    return FsmSpec(
+        name=machine_name,
+        params=[],
+        states=states,
+        initial_id=by_name[initial_name],
+        initial_name=initial_name,
+        transitions=transitions,
+        guards=guards,
+        actions=actions,
+    )
 
 
 def generate_dot(spec: FsmSpec) -> str:

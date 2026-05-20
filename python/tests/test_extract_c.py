@@ -96,3 +96,40 @@ def test_find_transitions():
 def test_find_machine_init():
     result = _find_machine_init(LIGHT_AST)
     assert result == ("light", "LIGHT_STATE_OFF")
+
+
+def test_ast_to_spec_states():
+    spec = ast_to_spec(LIGHT_AST)
+    assert spec.name == "light"
+    assert len(spec.states) == 2
+    assert spec.states[0].name == "OFF"
+    assert spec.states[0].id == 0
+    assert spec.states[1].name == "ON"
+    assert spec.states[1].id == 1
+
+
+def test_ast_to_spec_initial():
+    spec = ast_to_spec(LIGHT_AST)
+    assert spec.initial_name == "OFF"
+    assert spec.initial_id == 0
+
+
+def test_ast_to_spec_transitions():
+    spec = ast_to_spec(LIGHT_AST)
+    assert len(spec.transitions) == 2
+    t0 = spec.transitions[0]
+    assert t0.from_name == "OFF"
+    assert t0.to_name == "ON"
+    assert t0.guard == "button_pressed"
+    assert t0.action == "light_on"
+    t1 = spec.transitions[1]
+    assert t1.from_name == "ON"
+    assert t1.to_name == "OFF"
+    assert t1.guard == "button_pressed"
+    assert t1.action == "light_off"
+
+
+def test_ast_to_spec_guards_actions():
+    spec = ast_to_spec(LIGHT_AST)
+    assert spec.guards == ["button_pressed"]
+    assert spec.actions == ["light_on", "light_off"]
