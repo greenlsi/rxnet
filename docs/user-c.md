@@ -950,6 +950,81 @@ de incluir `trace.h`:
 
 ---
 
+## 10. Extracción de diagramas y verificación formal
+
+La herramienta `rxnet-extract` lee directamente el código C y genera diagramas
+de estado o una especificación TLA+ sin ningún paso intermedio.
+El código fuente C es la única fuente de verdad — no hace falta mantener YAML
+ni ningún fichero de anotaciones adicional.
+
+### Instalación
+
+```bash
+pip install rxnet          # instala rxnet-extract en $PATH
+# o bien:
+brew install rxnet-python
+```
+
+Requiere `clang` en `PATH` (cualquier versión de Apple Clang o LLVM Clang).
+
+### Uso desde la línea de comandos
+
+```bash
+# Graphviz DOT → SVG / PDF
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tpdf -o light.pdf
+
+# Mermaid stateDiagram-v2 (se renderiza en GitHub Markdown)
+rxnet-extract light_fsm.c -Iinclude --mermaid
+
+# TLA+ para model checking con TLC
+rxnet-extract light_fsm.c -Iinclude --tla > light_fsm.tla
+
+# Varios formatos en un solo paso (separados por '---')
+rxnet-extract light_fsm.c -Iinclude --tla --dot --mermaid
+
+# Los argumentos desconocidos se pasan a clang
+rxnet-extract light_fsm.c -Iinclude -DDEBUG=1 --dot
+```
+
+### Target `diagrams` del Makefile
+
+El `Makefile` de la biblioteca C genera diagramas para todos los ejemplos FSM:
+
+```bash
+cd c
+make diagrams   # produce .svg, .pdf y .tla para cada ejemplo
+```
+
+Los ficheros se escriben junto al código fuente de cada ejemplo.
+
+### Cómo funciona
+
+`rxnet-extract` ejecuta `clang -Xclang -ast-dump=json -fsyntax-only` sobre el
+fichero C y analiza el AST JSON resultante sin ninguna dependencia adicional:
+
+1. Busca `EnumConstantDecl` con `_STATE_` en el nombre → tabla de estados.
+2. Busca el `VarDecl` cuyo `qualType` contiene `rx_fsm_transition[` → tabla de transiciones.
+3. Busca la `CallExpr` a `rx_fsm_machine_init` → nombre de la máquina y estado inicial.
+
+Con esa información construye un `FsmSpec` interno y lo vuelca en el formato pedido.
+
+### Ejemplo de salida DOT
+
+```dot
+// FSM: light
+digraph {
+    rankdir=LR;
+    node [shape=circle fontname="Helvetica" fontsize=11];
+    __start [shape=point width=0.2];
+    __start -> "OFF";
+    "OFF" -> "ON" [label="button_pressed / light_on" fontsize=10];
+    "ON" -> "OFF" [label="button_pressed / light_off" fontsize=10];
+}
+```
+
+---
+
 ## Lectura adicional
 
 - **Código fuente**: `c/` — runtime (~200 líneas), fsm (~150 líneas), pn (~200 líneas)

@@ -895,6 +895,77 @@ hubieran sido vistos antes.
 
 ---
 
+## 10. Extracción de diagramas y verificación formal
+
+La herramienta `rxnet-extract` lee directamente el código fuente Python y
+genera diagramas de estado o una especificación TLA+ sin ningún paso
+intermedio. No hace falta mantener YAML ni ficheros de anotaciones adicionales.
+
+### Instalación
+
+```bash
+pip install rxnet          # instala rxnet-extract en $PATH
+# o bien:
+brew install rxnet-python
+```
+
+No requiere dependencias externas para ficheros `.py` — usa el módulo `ast`
+de la stdlib de Python.
+
+### Uso desde la línea de comandos
+
+```bash
+# Graphviz DOT → SVG / PDF
+rxnet-extract light_fsm.py --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.py --dot | dot -Tpdf -o light.pdf
+
+# Mermaid stateDiagram-v2 (se renderiza en GitHub Markdown)
+rxnet-extract light_fsm.py --mermaid
+
+# TLA+ para model checking con TLC
+rxnet-extract light_fsm.py --tla > light_fsm.tla
+
+# Varios formatos en un solo paso (separados por '---')
+rxnet-extract light_fsm.py --tla --dot --mermaid
+```
+
+La misma herramienta acepta ficheros `.c` si `clang` está en el `PATH`:
+
+```bash
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tsvg -o light.svg
+```
+
+### Cómo funciona
+
+`rxnet-extract` usa `ast.parse()` de la stdlib y recorre el AST en busca de
+tres patrones:
+
+1. Asignaciones `*_STATE_* = int` en el módulo → tabla de estados.
+2. Lista `[Transition(from, to, guard=fn, action=fn), ...]` → transiciones.
+3. Llamada `Machine(name="...", state=CONST, ...)` → nombre de la máquina y estado inicial.
+
+Los guiones bajos iniciales de los nombres de función se eliminan
+automáticamente: `_button_pressed` aparece como `button_pressed` en la salida.
+
+### Ejemplo de salida Mermaid
+
+```
+stateDiagram-v2
+    [*] --> OFF
+    OFF --> ON : button_pressed / light_on
+    ON --> OFF : button_pressed / light_off
+```
+
+### Restricción: solo patrones estáticos
+
+La extracción es estática: `rxnet-extract` no ejecuta el código. Si los
+estados o transiciones se construyen dinámicamente (listas generadas en
+runtime, clases que heredan estados, etc.) la herramienta no los verá. El
+patrón estándar rxnet — constantes de módulo + lista literal de `Transition`
++ llamada `Machine` — siempre es extraíble.
+
+---
+
 ## Lectura adicional
 
 - **Código fuente**: `python/rxnet/` — runtime (~80 líneas), fsm (~80 líneas), pn (~130 líneas)
