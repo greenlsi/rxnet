@@ -50,7 +50,7 @@ TEST_BINS         := $(TEST_RUNTIME_BIN) $(TEST_FSM_BIN) $(TEST_PN_BIN) $(TEST_T
 
 PARITY_RUNNER_BIN := $(BUILD_DIR)/parity_runner
 
-.PHONY: all lib examples test parity clean
+.PHONY: all lib examples test parity clean diagrams
 
 all: lib examples
 
@@ -260,6 +260,45 @@ $(PARITY_RUNNER_BIN): tests/parity_runner.c $(LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Itests $< $(LIB) -o $@
 
 parity: $(PARITY_RUNNER_BIN)
+
+# ------------------------------------------------------------------ #
+# Diagrams (requires clang + graphviz dot + python rxnet package)    #
+# ------------------------------------------------------------------ #
+
+RXNET_EXTRACT = PYTHONPATH=../python python3 -m rxnet.tools.extract_c
+RXNET_INC     = -Iinclude -Iexamples/fsm/01-light -Iexamples/fsm/02-auto -Iexamples/fsm/03-blink
+
+$(BUILD_DIR)/light_fsm.dot: examples/fsm/01-light/light_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --dot > $@
+
+$(BUILD_DIR)/auto_fsm.dot: examples/fsm/02-auto/auto_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --dot > $@
+
+$(BUILD_DIR)/blink_fsm.dot: examples/fsm/03-blink/blink_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --dot > $@
+
+$(BUILD_DIR)/light_fsm.tla: examples/fsm/01-light/light_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --tla > $@
+
+$(BUILD_DIR)/auto_fsm.tla: examples/fsm/02-auto/auto_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --tla > $@
+
+$(BUILD_DIR)/blink_fsm.tla: examples/fsm/03-blink/blink_fsm.c | $(BUILD_DIR)
+	$(RXNET_EXTRACT) $< $(RXNET_INC) --tla > $@
+
+$(BUILD_DIR)/%.svg: $(BUILD_DIR)/%.dot
+	dot -Tsvg $< -o $@
+
+$(BUILD_DIR)/%.pdf: $(BUILD_DIR)/%.dot
+	dot -Tpdf $< -o $@
+
+FSM_DIAGRAMS := \
+    $(BUILD_DIR)/light_fsm.svg $(BUILD_DIR)/light_fsm.pdf \
+    $(BUILD_DIR)/auto_fsm.svg  $(BUILD_DIR)/auto_fsm.pdf  \
+    $(BUILD_DIR)/blink_fsm.svg $(BUILD_DIR)/blink_fsm.pdf \
+    $(BUILD_DIR)/light_fsm.tla $(BUILD_DIR)/auto_fsm.tla $(BUILD_DIR)/blink_fsm.tla
+
+diagrams: $(FSM_DIAGRAMS)
 
 # ------------------------------------------------------------------ #
 # Install                                                              #
