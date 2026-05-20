@@ -1,6 +1,6 @@
 [project]
 name = "rxnet"
-version = "1.1.0"
+version = "1.1.1"
 description = "Reactive synchronous runtime — Python implementation"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"

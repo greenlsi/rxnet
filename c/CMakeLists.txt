@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(rxnet
-    VERSION 1.1.0
+    VERSION 1.1.1
     DESCRIPTION "Synchronous runtime for reactive models (FSM and Petri Nets)"
     HOMEPAGE_URL "https://github.com/greenlsi/rxnet"
     LANGUAGES C
