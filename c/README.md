@@ -36,6 +36,7 @@ Standard C99.  No external dependencies (threads require `-lpthread`).
 ```bash
 make          # build library + all examples
 make test     # run unit tests
+make diagrams # generate .svg, .pdf, and .tla for every FSM example
 make clean
 ```
 
@@ -45,6 +46,9 @@ Override compiler or flags:
 CC=clang make
 CFLAGS="-std=c99 -O2 -Iinclude" make
 ```
+
+`make diagrams` requires `rxnet-extract` (`pip install rxnet` or `brew install rxnet-python`)
+and `dot` from [Graphviz](https://graphviz.org).  Diagram files are written next to each example source.
 
 ## Multi-rate scheduling
 

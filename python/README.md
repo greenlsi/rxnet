@@ -170,6 +170,35 @@ uv run --extra dev pytest tests/ -v
 Tests cover runtime, FSM, PN semantics, multi-rate scheduling, and BSP
 barrier correctness.
 
+## Tools
+
+### `rxnet-extract` — FSM diagram and TLA+ extractor
+
+Reads an rxnet FSM source file (`.c` or `.py`) and emits diagrams or a TLA+ spec to stdout.
+No YAML or annotations — the source file is the single source of truth.
+
+```bash
+# Python source: uses stdlib ast, no extra dependencies
+rxnet-extract light_fsm.py --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.py --dot | dot -Tpdf -o light.pdf
+rxnet-extract light_fsm.py --tla
+rxnet-extract light_fsm.py --mermaid
+
+# C source: clang must be on PATH; extra args are forwarded to clang
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.c -Iinclude --tla --mermaid
+
+# multiple output formats in one pass, separated by '---'
+rxnet-extract light_fsm.py --tla --dot --mermaid
+```
+
+**How it works (Python):** `rxnet-extract` uses `ast.parse()` to locate
+`*_STATE_* = int` constants, a `Transition(...)` list, and a `Machine(name=..., state=...)` call.
+Leading underscores on guard/action function names are stripped so `_button_pressed` appears
+as `button_pressed` in the output.
+
+Install with `pip install rxnet` or `brew install rxnet-python`.
+
 ## Examples
 
 Interactive CLI examples mirror the C examples under `c/examples/`.  They share:

@@ -78,6 +78,39 @@ Requires Python 3.11+.
 | `c/examples/pn/04-mix/` | FSM + PN | Multiple PNs + FSM CLI |
 | `c/examples/mixed/` | FSM + PN | Shared base `rx_runtime` |
 
+## Tools
+
+### `rxnet-extract` — FSM diagram and TLA+ extractor
+
+Reads an rxnet FSM source file (C or Python) and emits one or more output formats to stdout.
+No YAML, no annotations — the C or Python source is the single source of truth.
+
+```bash
+# install (adds rxnet-extract to $PATH)
+pip install rxnet          # or: brew install rxnet-python
+
+# C source (clang must be on PATH; extra args forwarded to clang)
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.c -Iinclude --dot | dot -Tpdf -o light.pdf
+rxnet-extract light_fsm.c -Iinclude --tla
+rxnet-extract light_fsm.c -Iinclude --mermaid
+
+# Python source (no extra deps — uses stdlib ast)
+rxnet-extract light_fsm.py --dot | dot -Tsvg -o light.svg
+rxnet-extract light_fsm.py --tla
+rxnet-extract light_fsm.py --mermaid
+
+# multiple formats in one pass, separated by '---'
+rxnet-extract light_fsm.c -Iinclude --tla --dot --mermaid
+```
+
+The C Makefile includes a `diagrams` target that generates `.svg`, `.pdf`, and `.tla` for every FSM example:
+
+```bash
+cd c
+make diagrams
+```
+
 ## Specs
 
 Formal requirements and design documents:
