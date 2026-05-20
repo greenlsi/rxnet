@@ -86,7 +86,6 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
-
 # ── data model ────────────────────────────────────────────────────────────────
 
 COPYRIGHT = "Copyright 2026 Jose M. Moya <jm.moya@upm.es>"

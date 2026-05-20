@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -11,13 +10,32 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from rxnet.tools.extract_c import (
-    _collect_enum_constants,
+    _collect_all_enum_constants,
     _find_machine_init,
     _find_transitions,
     ast_to_spec,
     generate_dot,
     generate_mermaid,
 )
+
+
+def _declref(name: str) -> dict:
+    return {"kind": "DeclRefExpr", "referencedDecl": {"name": name}}
+
+
+def _cast(name: str) -> dict:
+    return {"kind": "ImplicitCastExpr", "inner": [_declref(name)]}
+
+
+def _cast_str(value: str) -> dict:
+    return {"kind": "ImplicitCastExpr", "inner": [{"kind": "StringLiteral", "value": value}]}
+
+
+def _transition(from_: str, to: str, guard: str, action: str) -> dict:
+    return {"kind": "InitListExpr", "inner": [
+        _declref(from_), _declref(to), _cast(guard), _cast(action),
+    ]}
+
 
 LIGHT_AST: dict = {
     "kind": "TranslationUnitDecl",
@@ -45,24 +63,10 @@ LIGHT_AST: dict = {
                 {
                     "kind": "InitListExpr",
                     "inner": [
-                        {
-                            "kind": "InitListExpr",
-                            "inner": [
-                                {"kind": "DeclRefExpr", "referencedDecl": {"name": "LIGHT_STATE_OFF"}},
-                                {"kind": "DeclRefExpr", "referencedDecl": {"name": "LIGHT_STATE_ON"}},
-                                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "button_pressed"}}]},
-                                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "light_on"}}]},
-                            ],
-                        },
-                        {
-                            "kind": "InitListExpr",
-                            "inner": [
-                                {"kind": "DeclRefExpr", "referencedDecl": {"name": "LIGHT_STATE_ON"}},
-                                {"kind": "DeclRefExpr", "referencedDecl": {"name": "LIGHT_STATE_OFF"}},
-                                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "button_pressed"}}]},
-                                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "light_off"}}]},
-                            ],
-                        },
+                        _transition("LIGHT_STATE_OFF", "LIGHT_STATE_ON",
+                                    "button_pressed", "light_on"),
+                        _transition("LIGHT_STATE_ON", "LIGHT_STATE_OFF",
+                                    "button_pressed", "light_off"),
                     ],
                 }
             ],
@@ -70,11 +74,11 @@ LIGHT_AST: dict = {
         {
             "kind": "CallExpr",
             "inner": [
-                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "rx_fsm_machine_init"}}]},
-                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "machine"}}]},
-                {"kind": "ImplicitCastExpr", "inner": [{"kind": "StringLiteral", "value": '"light"'}]},
-                {"kind": "DeclRefExpr", "referencedDecl": {"name": "LIGHT_STATE_OFF"}},
-                {"kind": "ImplicitCastExpr", "inner": [{"kind": "DeclRefExpr", "referencedDecl": {"name": "transitions"}}]},
+                _cast("rx_fsm_machine_init"),
+                _cast("machine"),
+                _cast_str('"light"'),
+                _declref("LIGHT_STATE_OFF"),
+                _cast("transitions"),
             ],
         },
     ],
@@ -82,7 +86,7 @@ LIGHT_AST: dict = {
 
 
 def test_collect_enum_constants():
-    result = _collect_enum_constants(LIGHT_AST)
+    result = _collect_all_enum_constants(LIGHT_AST)
     assert result == {"LIGHT_STATE_OFF": 0, "LIGHT_STATE_ON": 1}
 
 

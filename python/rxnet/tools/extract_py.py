@@ -9,7 +9,6 @@ from pathlib import Path
 
 from rxnet.tools.gen import FsmSpec, FsmState, FsmTransition
 
-
 # ── AST helpers ───────────────────────────────────────────────────────────────
 
 def _collect_enum_constants(tree: ast.Module) -> dict[str, int]:
@@ -67,7 +66,9 @@ def _find_machine_init(tree: ast.Module) -> tuple[str, str] | None:
         name = None
         state_const = None
         for kw in node.keywords:
-            if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            if (kw.arg == "name"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)):
                 name = kw.value.value
             elif kw.arg == "state" and isinstance(kw.value, ast.Name):
                 state_const = kw.value.id
