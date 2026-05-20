@@ -26,7 +26,6 @@ ast_to_spec(json) → FsmSpec   (same frozen dataclass as gen.py)
      │
      ├── --tla     → generate_tla(spec)       (reused from gen.py)
      ├── --dot     → generate_dot(spec)       (new, ~15 lines)
-     ├── --yaml    → generate_yaml(spec)      (new, ~20 lines)
      └── --mermaid → generate_mermaid(spec)   (new, ~15 lines)
 ```
 
@@ -56,7 +55,6 @@ Public surface:
 ```python
 def ast_to_spec(ast: dict, prefix_hint: str | None = None) -> FsmSpec: ...
 def generate_dot(spec: FsmSpec) -> str: ...
-def generate_yaml(spec: FsmSpec) -> str: ...
 def generate_mermaid(spec: FsmSpec) -> str: ...
 ```
 
@@ -65,7 +63,7 @@ def generate_mermaid(spec: FsmSpec) -> str: ...
 ## CLI
 
 ```
-python -m rxnet.tools.extract_c <FILE.c> [CLANG_FLAGS...] [--tla] [--dot] [--yaml] [--mermaid]
+python -m rxnet.tools.extract_c <FILE.c> [CLANG_FLAGS...] [--tla] [--dot] [--mermaid]
 ```
 
 - Extra positional/flag arguments that start with `-` (e.g. `-I`, `-D`) are forwarded verbatim to clang.
@@ -81,10 +79,7 @@ python -m rxnet.tools.extract_c light_fsm.c -I../../include --tla
 # DOT piped to Graphviz
 python -m rxnet.tools.extract_c light_fsm.c -I../../include --dot | dot -Tsvg -o light.svg
 
-# YAML descriptor (round-trip with gen.py)
-python -m rxnet.tools.extract_c light_fsm.c -I../../include --yaml > light.yaml
-
-# Mermaid
+# Mermaid (renders in GitHub Markdown)
 python -m rxnet.tools.extract_c light_fsm.c -I../../include --mermaid
 ```
 
@@ -128,9 +123,6 @@ Each gets a `Makefile` with the pattern rules above and a `diagrams` target that
 ### DOT
 Standard Graphviz digraph. States as circles, initial state marked with a point node, transitions labelled `guard / action` (or just `guard` if no action, or `—` if unconditional).
 
-### YAML
-Round-trippable with `gen.py`. Includes `name`, `states`, `initial`, `transitions` (with `guard` and `action` fields). `params` section is omitted (cannot be recovered from the C AST without deeper analysis).
-
 ### Mermaid
 `stateDiagram-v2` block, compatible with GitHub Markdown rendering.
 
@@ -142,4 +134,4 @@ Identical output to `gen.py`'s `generate_tla` — same module format, same guard
 - Requires `clang` on `$PATH`.
 - Requires include paths for rxnet headers (`rxnet/fsm.h`). The Makefile provides these via `RXNET_INC`.
 - Only handles one machine per C file (the first `rx_fsm_machine_init` call found). Files with multiple machines are out of scope.
-- `params` (factory function arguments) are not recovered; the YAML output omits the `params` section.
+- The C source is the single source of truth. No YAML round-trip — that would create a derived copy that can drift.
