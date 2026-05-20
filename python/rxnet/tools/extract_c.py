@@ -62,7 +62,9 @@ def _collect_enum_constants(ast: dict) -> dict[str, int]:
             continue
         for child in node.get("inner", []):
             if child.get("kind") in ("ConstantExpr", "IntegerLiteral"):
-                result[name] = int(child["value"])
+                value = child.get("value")
+                if value is not None:
+                    result[name] = int(value)
                 break
     return result
 
