@@ -133,3 +133,45 @@ def test_ast_to_spec_guards_actions():
     spec = ast_to_spec(LIGHT_AST)
     assert spec.guards == ["button_pressed"]
     assert spec.actions == ["light_on", "light_off"]
+
+
+def test_generate_dot_contains_states():
+    spec = ast_to_spec(LIGHT_AST)
+    dot = generate_dot(spec)
+    assert "OFF" in dot
+    assert "ON" in dot
+    assert "__start" in dot
+    assert "button_pressed" in dot
+
+
+def test_generate_dot_initial_arrow():
+    spec = ast_to_spec(LIGHT_AST)
+    dot = generate_dot(spec)
+    assert '__start -> "OFF"' in dot
+
+
+def test_generate_dot_transition_labels():
+    spec = ast_to_spec(LIGHT_AST)
+    dot = generate_dot(spec)
+    assert "button_pressed / light_on" in dot
+    assert "button_pressed / light_off" in dot
+
+
+def test_generate_mermaid_format():
+    spec = ast_to_spec(LIGHT_AST)
+    mmd = generate_mermaid(spec)
+    assert mmd.startswith("stateDiagram-v2")
+    assert "[*] --> OFF" in mmd
+    assert "OFF --> ON" in mmd
+    assert "ON --> OFF" in mmd
+    assert "button_pressed / light_on" in mmd
+
+
+def test_generate_tla_reuse():
+    from rxnet.tools.gen import generate_tla
+    spec = ast_to_spec(LIGHT_AST)
+    tla = generate_tla(spec)
+    assert "MODULE light_fsm" in tla
+    assert "S_OFF == 0" in tla
+    assert "S_ON == 1" in tla
+    assert "T_OFF_ON_button_pressed" in tla

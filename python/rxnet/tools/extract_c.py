@@ -109,7 +109,7 @@ def _find_machine_init(ast: dict) -> tuple[str, str] | None:
     return None
 
 
-# ── Additional public functions (stubs for now) ────────────────────────────────
+# ── output generators ──────────────────────────────────────────────────────────
 
 def ast_to_spec(ast: dict) -> FsmSpec:
     """Extract an FsmSpec from a clang AST JSON dict."""
@@ -164,10 +164,37 @@ def ast_to_spec(ast: dict) -> FsmSpec:
 
 
 def generate_dot(spec: FsmSpec) -> str:
-    """Generate Graphviz DOT format (implementation pending)."""
-    raise NotImplementedError()
+    """Graphviz DOT digraph from FsmSpec."""
+    lines = [
+        f"// FSM: {spec.name}",
+        "digraph {",
+        "    rankdir=LR;",
+        '    node [shape=circle fontname="Helvetica" fontsize=11];',
+        '    __start [shape=point width=0.2];',
+        f'    __start -> "{spec.initial_name}";',
+    ]
+    for t in spec.transitions:
+        label = t.guard or ""
+        if t.action:
+            label = f"{label} / {t.action}" if label else t.action
+        if not label:
+            label = "—"
+        lines.append(
+            f'    "{t.from_name}" -> "{t.to_name}" [label="{label}" fontsize=10];'
+        )
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def generate_mermaid(spec: FsmSpec) -> str:
-    """Generate Mermaid diagram format (implementation pending)."""
-    raise NotImplementedError()
+    """Mermaid stateDiagram-v2 from FsmSpec."""
+    lines = ["stateDiagram-v2", f"    [*] --> {spec.initial_name}"]
+    for t in spec.transitions:
+        label = t.guard or ""
+        if t.action:
+            label = f"{label} / {t.action}" if label else t.action
+        arrow = f"    {t.from_name} --> {t.to_name}"
+        if label:
+            arrow += f" : {label}"
+        lines.append(arrow)
+    return "\n".join(lines)
