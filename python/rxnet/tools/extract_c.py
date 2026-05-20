@@ -223,8 +223,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="rxnet-extract",
         description=(
-            "Extract FSM topology from a rxnet C source file and emit one or more "
-            "output formats.  Uses clang to parse the AST — clang must be on PATH."
+            "Extract FSM topology from a rxnet source file (.c or .py) and emit "
+            "one or more output formats."
         ),
         epilog="""
 output formats (at least one required):
@@ -232,19 +232,22 @@ output formats (at least one required):
   --dot      Graphviz DOT digraph (pipe to 'dot -Tsvg' or 'dot -Tpdf')
   --mermaid  Mermaid stateDiagram-v2 (renders in GitHub Markdown)
 
-any extra arguments are forwarded to clang (e.g. -I, -D):
+C source (extra arguments forwarded to clang, e.g. -I, -D):
   rxnet-extract light_fsm.c -Iinclude --dot
   rxnet-extract light_fsm.c -Iinclude --tla --dot
   rxnet-extract light_fsm.c -Iinclude --dot | dot -Tsvg -o light.svg
-  rxnet-extract light_fsm.c -Iinclude --dot | dot -Tpdf -o light.pdf
+
+Python source (no extra arguments needed):
+  rxnet-extract light_fsm.py --dot
+  rxnet-extract light_fsm.py --tla --mermaid
 
 multiple formats are separated by '---' on stdout:
   rxnet-extract light_fsm.c -Iinclude --tla --dot --mermaid > all.txt
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("c_file", metavar="FILE.c",
-                    help="rxnet FSM implementation file (e.g. light_fsm.c)")
+    ap.add_argument("file", metavar="FILE",
+                    help="rxnet FSM source file (.c or .py)")
     ap.add_argument("--tla",     action="store_true", help="emit TLA+ spec")
     ap.add_argument("--dot",     action="store_true", help="emit Graphviz DOT")
     ap.add_argument("--mermaid", action="store_true", help="emit Mermaid stateDiagram-v2")
@@ -254,11 +257,20 @@ multiple formats are separated by '---' on stdout:
     if not (args.tla or args.dot or args.mermaid):
         ap.error("at least one of --tla, --dot, --mermaid is required")
 
-    c_file = Path(args.c_file).resolve()
+    src_file = Path(args.file).resolve()
+    suffix = src_file.suffix.lower()
 
     try:
-        ast = run_clang_ast(c_file, clang_args)
-        spec = ast_to_spec(ast)
+        if suffix == ".py":
+            from rxnet.tools.extract_py import parse_python
+            spec = parse_python(src_file)
+        elif suffix == ".c":
+            ast_json = run_clang_ast(src_file, clang_args)
+            spec = ast_to_spec(ast_json)
+        else:
+            print(f"error: unsupported file type {suffix!r} (expected .c or .py)",
+                  file=sys.stderr)
+            return 1
     except (RuntimeError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
