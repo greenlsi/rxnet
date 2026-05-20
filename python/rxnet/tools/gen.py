@@ -86,15 +86,6 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover
-    print(
-        "error: PyYAML is required — add it to your dev dependencies:\n"
-        "  uv add --dev pyyaml",
-        file=sys.stderr,
-    )
-    sys.exit(1)
 
 # ── data model ────────────────────────────────────────────────────────────────
 
@@ -159,24 +150,33 @@ class FsmSpec:
 
 # ── YAML parser ───────────────────────────────────────────────────────────────
 
-# Custom loader that does NOT interpret ON/OFF/YES/NO/TRUE/FALSE as booleans.
-# PyYAML 1.1 treats those as booleans by default, which breaks state names
-# like OFF and ON that are very common in FSM descriptors.
-class _Loader(yaml.SafeLoader):
-    pass
-
-_Loader.yaml_implicit_resolvers = {
-    key: [
-        (tag, regexp)
-        for tag, regexp in resolvers
-        if tag != "tag:yaml.org,2002:bool"
-    ]
-    for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
-}
-
-
 def parse_yaml(path: Path) -> FsmSpec:
     """Load and validate a FSM YAML descriptor, returning a :class:`FsmSpec`."""
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        print(
+            "error: PyYAML is required — add it to your dev dependencies:\n"
+            "  uv add --dev pyyaml",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Custom loader that does NOT interpret ON/OFF/YES/NO/TRUE/FALSE as booleans.
+    # PyYAML 1.1 treats those as booleans by default, which breaks state names
+    # like OFF and ON that are very common in FSM descriptors.
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    _Loader.yaml_implicit_resolvers = {
+        key: [
+            (tag, regexp)
+            for tag, regexp in resolvers
+            if tag != "tag:yaml.org,2002:bool"
+        ]
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+
     raw: dict = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506
 
     # states
