@@ -3,10 +3,10 @@
 
 #pragma once
 
-#define RXNET_VERSION       "1.1.2"
+#define RXNET_VERSION       "1.1.3"
 #define RXNET_VERSION_MAJOR 1
 #define RXNET_VERSION_MINOR 1
-#define RXNET_VERSION_PATCH 2
+#define RXNET_VERSION_PATCH 3
 
 /*
  * Compile-time limits for fixed-size C runtime buffers.
