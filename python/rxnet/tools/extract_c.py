@@ -53,12 +53,12 @@ def _first_string_literal(node: dict) -> str | None:
 
 # ── three targeted extraction functions ───────────────────────────────────────
 
-def _collect_enum_constants(ast: dict) -> dict[str, int]:
-    """Return {ENUM_NAME: int_value} for all *_STATE_* EnumConstantDecl nodes."""
+def _collect_all_enum_constants(ast: dict) -> dict[str, int]:
+    """Return {ENUM_NAME: int_value} for every EnumConstantDecl in the AST."""
     result: dict[str, int] = {}
     for node in _find_all(ast, "EnumConstantDecl"):
         name = node.get("name", "")
-        if "_STATE_" not in name:
+        if not name:
             continue
         for child in node.get("inner", []):
             if child.get("kind") in ("ConstantExpr", "IntegerLiteral"):
@@ -67,6 +67,39 @@ def _collect_enum_constants(ast: dict) -> dict[str, int]:
                     result[name] = int(value)
                 break
     return result
+
+
+def _transition_state_names(
+    raw_transitions: list[tuple[str | None, str | None, str | None, str | None]],
+) -> set[str]:
+    """Collect all state constant names actually referenced in the transition table."""
+    names: set[str] = set()
+    for from_c, to_c, _, _ in raw_transitions:
+        if from_c:
+            names.add(from_c)
+        if to_c:
+            names.add(to_c)
+    return names
+
+
+def _common_underscore_prefix(names: list[str]) -> str:
+    """Longest common underscore-delimited prefix shared by all names.
+
+    Examples:
+      ["AUTO_STATE_OFF", "AUTO_STATE_ON"]          → "AUTO_STATE_"
+      ["RAFT_ROLE_FOLLOWER", "RAFT_ROLE_LEADER"]   → "RAFT_ROLE_"
+      ["S_OFF", "S_ON"]                            → "S_"
+    """
+    if not names:
+        return ""
+    parts_lists = [n.split("_") for n in names]
+    common: list[str] = []
+    for group in zip(*parts_lists):
+        if len(set(group)) == 1:
+            common.append(group[0])
+        else:
+            break
+    return "_".join(common) + "_" if common else ""
 
 
 def _find_transitions(
@@ -94,38 +127,63 @@ def _find_transitions(
     return []
 
 
-def _find_machine_init(ast: dict) -> tuple[str, str] | None:
-    """Return (machine_name, initial_state_const) from the rx_fsm_machine_init call."""
+def _find_machine_init(ast: dict) -> tuple[str | None, str | None]:
+    """Return (machine_name_or_None, initial_state_const_or_None).
+
+    machine_name is None when the name argument is a runtime variable rather than
+    a string literal (e.g. ``config->node_id``).  Callers should fall back to the
+    source file's stem in that case.
+    """
     for node in _find_all(ast, "CallExpr"):
         inner = node.get("inner", [])
         if len(inner) < 4:
             continue
         if _first_declref(inner[0]) != "rx_fsm_machine_init":
             continue
-        machine_name = _first_string_literal(inner[2])
+        machine_name = _first_string_literal(inner[2])   # None if not a literal
         initial_const = _first_declref(inner[3])
-        if machine_name and initial_const:
+        if initial_const:
             return machine_name, initial_const
-    return None
+    return None, None
 
 
 # ── output generators ──────────────────────────────────────────────────────────
 
-def ast_to_spec(ast: dict) -> FsmSpec:
-    """Extract an FsmSpec from a clang AST JSON dict."""
-    enum_constants = _collect_enum_constants(ast)
-    raw_transitions = _find_transitions(ast)
-    init_info = _find_machine_init(ast)
+def ast_to_spec(ast: dict, name_hint: str = "fsm") -> FsmSpec:
+    """Extract an FsmSpec from a clang AST JSON dict.
 
-    if not enum_constants:
-        raise ValueError("No *_STATE_* enum constants found")
-    if init_info is None:
+    State constants are discovered from the names actually used in the
+    ``rx_fsm_transition[]`` array — no naming convention is assumed.
+    The common underscore-delimited prefix (e.g. ``RAFT_ROLE_`` or ``AUTO_STATE_``)
+    is stripped automatically to produce clean state names.
+
+    ``name_hint`` is used as the module/machine name when the ``rx_fsm_machine_init``
+    call passes a runtime variable rather than a string literal.
+    """
+    raw_transitions = _find_transitions(ast)
+    machine_name, initial_const = _find_machine_init(ast)
+
+    if initial_const is None:
         raise ValueError("No rx_fsm_machine_init call found")
 
-    machine_name, initial_const = init_info
+    # Discover state constants from what the transition table actually references
+    state_const_names = _transition_state_names(raw_transitions)
+    if not state_const_names and initial_const:
+        state_const_names.add(initial_const)
+    all_consts = _collect_all_enum_constants(ast)
+    enum_constants = {k: v for k, v in all_consts.items() if k in state_const_names}
+
+    if not enum_constants:
+        raise ValueError(
+            f"Could not resolve state enum constants "
+            f"{sorted(state_const_names)} in the AST"
+        )
+
+    # Determine the common prefix to strip (works with any naming convention)
+    prefix = _common_underscore_prefix(sorted(enum_constants))
 
     def _state_suffix(const_name: str) -> str:
-        return const_name.split("_STATE_", 1)[1] if "_STATE_" in const_name else const_name
+        return const_name[len(prefix):] if const_name.startswith(prefix) else const_name
 
     states = [
         FsmState(id=v, name=_state_suffix(k))
@@ -134,6 +192,7 @@ def ast_to_spec(ast: dict) -> FsmSpec:
     by_name = {s.name: s.id for s in states}
 
     initial_name = _state_suffix(initial_const)
+    resolved_machine_name = machine_name if machine_name else name_hint
 
     transitions: list[FsmTransition] = []
     for from_c, to_c, guard, action in raw_transitions:
@@ -152,7 +211,7 @@ def ast_to_spec(ast: dict) -> FsmSpec:
     actions = list(dict.fromkeys(t.action for t in transitions if t.action))
 
     return FsmSpec(
-        name=machine_name,
+        name=resolved_machine_name,
         params=[],
         states=states,
         initial_id=by_name[initial_name],
@@ -266,7 +325,7 @@ multiple formats are separated by '---' on stdout:
             spec = parse_python(src_file)
         elif suffix == ".c":
             ast_json = run_clang_ast(src_file, clang_args)
-            spec = ast_to_spec(ast_json)
+            spec = ast_to_spec(ast_json, name_hint=src_file.stem)
         else:
             print(f"error: unsupported file type {suffix!r} (expected .c or .py)",
                   file=sys.stderr)
