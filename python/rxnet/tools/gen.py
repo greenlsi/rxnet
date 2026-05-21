@@ -729,8 +729,9 @@ def generate_tla(spec: FsmSpec) -> str:
         "VARIABLES",
         "    state,   \\* current machine state (integer)",
     ]
-    for gv in guard_vars:
-        lines.append(f"    {gv},   \\* abstract guard (boolean environment input)")
+    for i, gv in enumerate(guard_vars):
+        comma = "," if i < len(guard_vars) - 1 else ""
+        lines.append(f"    {gv}{comma}   \\* abstract guard (boolean environment input)")
     lines += [
         "",
         f"vars == {vars_tuple}",
@@ -779,7 +780,7 @@ def generate_tla(spec: FsmSpec) -> str:
     lines += [
         "    \\/ Stutter",
         "",
-        f"Spec == Init /\\ [][Next]_{vars_tuple}",
+        "Spec == Init /\\ [][Next]_state",
         "",
         "\\* ── type invariant ──────────────────────────────────────────────────────",
         "TypeOK ==",
