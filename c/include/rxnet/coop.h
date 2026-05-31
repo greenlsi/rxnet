@@ -31,7 +31,7 @@
  */
 
 #include "rxnet/config.h"
-#include "rxnet/cyclic.h"   /* rx_tick_t, rx_tick_now, rx_tick_add_us, rx_tick_sleep_until */
+#include "rxnet/runtime.h"   /* rx_tick_t, rx_tick_now, rx_tick_add_us, rx_tick_sleep_until */
 
 #ifdef __cplusplus
 extern "C" {
