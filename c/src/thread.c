@@ -488,7 +488,7 @@ rx_thread_exec_run(rx_thread_exec *te)
                 fprintf(stderr,
                         "rxnet: thread_exec_run: rx_thread_create failed "
                         "(group %d, node %d)\n", g, i);
-                grp->tids[i] = 0;
+                memset(&grp->tids[i], 0, sizeof(grp->tids[i]));
                 te->fifo_configured = 0;
             } else if (rx_thread_configure_fifo(&grp->tids[i],
                        grp->args[i].priority_rank,

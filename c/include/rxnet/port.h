@@ -7,7 +7,7 @@
  * Includes one of three port headers based on the build environment:
  *
  *   ESP_PLATFORM or RXNET_PORT_FREERTOS  → port/freertos.h  (ESP-IDF)
- *   CONFIG_ZEPHYR or RXNET_PORT_ZEPHYR   → port/zephyr.h    (Zephyr)
+ *   CONFIG_ZEPHYR, __ZEPHYR__ or RXNET_PORT_ZEPHYR   → port/zephyr.h    (Zephyr)
  *   (default)                            → port/posix.h     (Linux/macOS)
  *
  * The selected port header defines the following API used by all rxnet
@@ -69,7 +69,7 @@
 #  include "rxnet/port/freertos.h"
 
 #elif defined(RXNET_PORT_ZEPHYR) || \
-      (!defined(RXNET_PORT_POSIX) && !defined(RXNET_PORT_FREERTOS) && defined(CONFIG_ZEPHYR))
+      (!defined(RXNET_PORT_POSIX) && !defined(RXNET_PORT_FREERTOS) && (defined(CONFIG_ZEPHYR) || defined(__ZEPHYR__)))
 #  include "rxnet/port/zephyr.h"
 
 #else
